@@ -1,0 +1,3 @@
+global-exclude *test*.*
+
+recursive-include my_package *

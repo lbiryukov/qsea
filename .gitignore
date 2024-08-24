@@ -1,0 +1,25 @@
+# Virtual environment
+qsea_env/
+
+# Python byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# VS Code settings (if you're using VS Code)
+.vscode/
+
+# PyCharm settings (if you're using PyCharm)
+.idea/
+
+# OS generated files
+.DS_Store
+Thumbs.db
