@@ -1318,7 +1318,11 @@ class AppChildren():
                     logger.error('AppChildren.add function, source layout is not valid')
                     return False
                 tmprop = mprop['result']['qLayout']['qMeasure']
-                tmprop['qLabelExpression'] = source.label_expression        # this parameter is not returned correctly by get_layout()
+                
+                # label_expression is not returned correctly by get_layout(), processing seperately, handling NAN value
+                if source.label_expression != source.label_expression: le = ''
+                else: le = source.label_expression
+                tmprop['qLabelExpression'] = le        
                 
                 t = {
                     "handle": self.app_handle,

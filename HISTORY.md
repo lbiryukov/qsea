@@ -1,5 +1,8 @@
 # History
 
+## [0.0.20] - 2024-08-26
+- Fixes minor bugs
+
 ## [0.0.19] - 2024-08-25
 - Added bookamrk support
 - Added support for measure and dimension base colors
