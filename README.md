@@ -55,6 +55,8 @@ pip install qsea
         - [Sheet.get_layout()](#sheetget_layout)
     - [Field class](#field-class)
         - [Field properties](#field-properties)
+    - [Bookmark class](#bookmark-class)
+        - [Bookmark properties](#bookmark-properties)
     - [Object class](#object-class)
         - [Object properties](#object-properties)
         - [Object.export_data()](#objectexport_data)

@@ -4,7 +4,7 @@
 - Fixes minor bugs
 
 ## [0.0.19] - 2024-08-25
-- Added bookamrk support
+- Added bookmark support
 - Added support for measure and dimension base colors
 - Added 'source' parameter to 'add' function to copy the measure or dimension from another app 
 - Fixed an error proceeding an empty sheet
