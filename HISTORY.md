@@ -1,5 +1,12 @@
 # History
 
+## [0.0.19] - 2024-08-25
+- Added bookamrk support
+- Added support for measure and dimension base colors
+- Added 'source' parameter to 'add' function to copy the measure or dimension from another app 
+- Fixed an error proceeding an empty sheet
+- Fixed minor bugs
+
 ## [0.0.17] - 2024-01-31
 - Fixed some problems that occured if the connection class object was recreated before terminating the connection to Qlik Sense Engine API
 

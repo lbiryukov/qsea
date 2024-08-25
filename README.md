@@ -244,6 +244,8 @@ Args:
 * format_use_thou (int, optional): Use thousands separator for the object to be created. Defaults to 0.
 * format_dec (str, optional): Decimal separator for the object to be created. Defaults to ','.
 * format_thou (str, optional): Thousands separator for the object to be created. Defaults to ''.
+* base_color (str, optional): Base color (hex) for the object to be created. Defaults to None.
+* source (variable, measure or dimension, optional): Source object for the object to be created. Defaults to None.
 
 Returns: True if the object was created successfully, False otherwise.
 Only parameters applicable to the specific class will be used
@@ -251,6 +253,7 @@ Only parameters applicable to the specific class will be used
 App.variables.add(name = 'MyVar', definition = 'sum(Sales)')
 App.measures.add(name = 'MyFunc', definition = 'sum(Sales)', format_type = 'F')
 App.dimensions.add(name = 'MyDim', definition = 'Customer')
+App.measures.add(source = App1.measures['MyFunc'])
 ```
 
 ### Variable class
@@ -347,6 +350,7 @@ for ms in app.measures:
 * format_use_thou: Use thousands separator for the object
 * format_dec: Decimal separator for the object
 * format_thou: Thousands separator for the object
+* base_color: Base color (hex) of the object
 * auxiliary
     - handle: the internal handle of the object in the Qlik Sense Engine API; can be used to access the measure via the `query()` function
     - app_handle: the handle of the parent App object
@@ -374,6 +378,7 @@ Args:
 * format_use_thou (int, optional): Use thousands separator for the object to be created. Defaults to 0.
 * format_dec (str, optional): Decimal separator for the object to be created. Defaults to ','.
 * format_thou (str, optional): Thousands separator for the object to be created. Defaults to ''.
+* base_color (str, optional): Base color (hex) of the object to be created. Defaults to None.
 
 Returns: 
     True if the measure was updated successfully, False otherwise
@@ -430,6 +435,7 @@ for dim in app.dimensions:
 * name: the name of the dimension you generally use in the Qlik Sense interface
 * definition: the formula behind the dimension
 * label: the label of the dimension, as it appears in charts
+* base_color: Base color (hex) of the object
 * auxiliary
     - handle: the internal handle of the object in the Qlik Sense Engine API; can be used to access the dimension via the `query()` function
     - app_handle: the handle of the parent App object
@@ -444,6 +450,7 @@ Updates the dimension on the Qlik Sense Server
 Args: 
 * definition (str, optional): The definition of the dimension
 * label (str, optional): the label of the dimension, as it appears in charts
+* base_color (str, optional): Base color (hex) of the object to be created. Defaults to None.
 
 Returns: 
     True if the dimension was updated successfully, False otherwise
@@ -528,7 +535,7 @@ sh.get_layout()
 
 
 ### Field class
-The class represents the fields of the application and is a member of the App.fields collection. You can only use the class for information purposes; no changes can be made with fields via QSEA."
+The class represents the fields of the application and is a member of the App.fields collection. You can only use the class for information purposes; no changes can be made with fields via QSEA.
 
 ```python
 for fld in app.fields:
@@ -542,6 +549,33 @@ for fld in app.fields:
 * auxiliary
     - handle: internal handle of the field object
     - app_handle: handle of the parent App object
+
+### Bookmark class
+The class represents the bookmarks of the application and is a member of the App.bookmarks collection. You can only use the class for information purposes; no changes can be made with bookmarks via QSEA.
+
+```python
+for bm in app.bookmarks:
+    print(bm.name)
+```
+
+#### Bookmark properties
+* name: name of the bookmark
+* owner_id: GUID of the owner of the bookmark
+* owner_user_id: user id of the owner of the bookmark
+* owner_name: name of the owner of the bookmark
+* description: description of the bookmark
+* state_data: selection properties of the bookmark in JSON format; unfortionately, the whole list of selections can not be retrieved correctly
+* auxiliary
+    - handle: internal handle of the bookmark object
+    - app_handle: handle of the parent App object
+    - id: Qlik Sense internal id of the bookmark
+    - parent: AppChildren object; you can access the App class object like this `ms.parent.parent`
+    - created_date: creation date of the bookmark, as stored in Qlik Sense
+    - modified_date: date of the last modification of the bookmark, as stored in Qlik Sense
+    - published: True if the bookmark is published, False if not
+    - approved: True if the bookmark is approved, False if not
+
+
 
 
 ### Object class 

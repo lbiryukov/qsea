@@ -614,6 +614,7 @@ def _get_dim_pandas(ws, app_handle: int) -> pd.DataFrame:
     df['qDimFieldDefs'] = 'Unknown'
     df['qDimFieldGrouping'] = 'Unknown'
     df['qDimFieldLabels'] = 'Unknown'
+    df['qDimFieldBaseColor'] = 'Unknown'
 
 
     # since the DimensionList method does not return the field name, we need to get it from each dimension separately
@@ -636,9 +637,13 @@ def _get_dim_pandas(ws, app_handle: int) -> pd.DataFrame:
             "params": {}
             })
         
-        df.at[i, 'qDimFieldDefs'] = query_result["result"]["qProp"]['qDim']['qFieldDefs']
-        df.at[i, 'qDimFieldGrouping'] = query_result["result"]["qProp"]['qDim']['qGrouping']
-        df.at[i, 'qDimFieldLabels'] = query_result["result"]["qProp"]['qDim']['qFieldLabels']
+        df.at[i, 'qDimFieldDefs'] = query_result['result']['qProp']['qDim']['qFieldDefs']
+        df.at[i, 'qDimFieldGrouping'] = query_result['result']['qProp']['qDim']['qGrouping']
+        df.at[i, 'qDimFieldLabels'] = query_result['result']['qProp']['qDim']['qFieldLabels']
+        if 'coloring' in query_result['result']['qProp']['qDim'] \
+            and 'baseColor' in query_result['result']['qProp']['qDim']['coloring'] \
+            and 'color' in query_result['result']['qProp']['qDim']['coloring']['baseColor']:
+            df.at[i, 'qDimFieldBaseColor'] = query_result['result']['qProp']['qDim']['coloring']['baseColor']['color']
 
     logger.debug('_get_dim_pandas function completed, len(df): %s', len(df))
     return df
@@ -1169,6 +1174,7 @@ class AppChildren():
                     dim.id = row['qInfo.qId']
                     dim.definition = row['qDimFieldDefs'] 
                     dim.label = row['qDimFieldLabels']
+                    dim.base_color = row['qDimFieldBaseColor']
                     try: dim.created_date = dt.datetime.strptime(row['qMeta.createdDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
                     except: pass
                     try: dim.modified_date = dt.datetime.strptime(row['qMeta.modifiedDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
@@ -1210,8 +1216,9 @@ class AppChildren():
         return True
 
     
-    def add(self, name: str, definition: str, description: str = '', label: str = '', label_expression: str = '', format_type: str = 'U', \
-                           format_ndec: int = 10, format_use_thou: int = 0, format_dec: str = ',', format_thou: str = '', base_color = '') -> bool:
+    def add(self, name: str = '', definition: str = '', description: str = '', label: str = '', label_expression: str = '', format_type: str = 'U', \
+                           format_ndec: int = 10, format_use_thou: int = 0, format_dec: str = ',', format_thou: str = '' \
+                            , base_color = '', source = None) -> bool:
         """
         Adds a new object to the app; depending on the type of the AppChildren object, the object will be a variable, a measure, or a dimension.
 
@@ -1233,14 +1240,37 @@ class AppChildren():
             format_dec (str, optional): Decimal separator of the object to be created. Defaults to ','.
             format_thou (str, optional): Thousands separator of the object to be created. Defaults to ''.
             base_color (str, optional): Base color (hex) of the measure to be created. Defaults to ''.
+            source (variable, measure or dimension, optional): Source object to be copied. Defaults to None.
 
         Returns:
             bool: True if the object was created successfully, False otherwise.
         """
         
-        logger.debug('AppChildren.add function started, type = %s, name = %s, definition = %s, description = %s, label = %s', \
-                     self._type, name, definition, description, label)
+        logger.debug('AppChildren.add function started, type = %s, name = %s, definition = %s, description = %s, label = %s, source = %s', \
+                     self._type, name, definition, description, label, source)
+        
+        # check necessary parametres
+        if source is None and (name == '' or definition == ''):
+            logger.error('AppChildren.add function, either source or both name and definition are required')
+            return False
+        
+        if source is not None and type(source) not in (Variable, Measure, Dimension):
+            logger.error('AppChildren.add function, source must be a Variable, Measure or Dimension object, %s provided', type(source))
+            return False
+
+        if source is not None:
+            if (type(source) == Variable and self._type != 'variables') or \
+                (type(source) == Measure and self._type != 'measures') or \
+                (type(source) == Dimension and self._type != 'dimensions'):
+                logger.error('AppChildren.add function, source type does not match AppChildren type')
+                return False
+
         if self._type == 'variables':
+            if source is not None:
+                name = source.name
+                definition = source.definition
+                description = source.description
+
             query_result = query(self.parent.ws, {
                 "jsonrpc": "2.0",
                 "id": 4,
@@ -1282,43 +1312,69 @@ class AppChildren():
             return True
         
         if self._type == 'measures':
-            t = {
-                "handle": self.app_handle,
-                "method": "CreateMeasure",
-                "params": {
-                    "qProp": {
-                        "qInfo": {
-                            "qType": "measure"
-                        },
-                        "qMeasure": {
-                            "qLabel": label,
-                            "isCustomFormatted": True,
-                            "numFormatFromTemplate": False,
-                            "qNumFormat": {
-                                                "qType": format_type,
-                                                "qnDec": format_ndec,
-                                                'qUseThou': format_use_thou,
-                                                "qDec": format_dec,
-                                                'qThou': format_thou
-                                                      },
-                            "coloring": {"baseColor": {"color": base_color,
-                                'index': 1,
-                                'isCustomFormatted': False}},
-                            "qLabelExpression": label_expression,
-                            "qDef": definition,
-                            "qGrouping": 0,
-                            "qExpressions": [
-                                ""
-                            ],
-                            "qActiveExpression": 0
-                        },
-                        "qMetaDef": {
-                            "title": name,
-                            "description": description
-                                            }
+            if source is not None:
+                mprop = source.get_layout()
+                if 'result' not in mprop or 'qLayout' not in mprop['result'] or 'qMeasure' not in mprop['result']['qLayout']:
+                    logger.error('AppChildren.add function, source layout is not valid')
+                    return False
+                tmprop = mprop['result']['qLayout']['qMeasure']
+                tmprop['qLabelExpression'] = source.label_expression        # this parameter is not returned correctly by get_layout()
+                
+                t = {
+                    "handle": self.app_handle,
+                    "method": "CreateMeasure",
+                    "params": {
+                        "qProp": {
+                            "qInfo": {
+                                "qType": "measure"
+                            },
+                            "qMeasure": tmprop,
+                            "qMetaDef": {
+                                "title": source.name,
+                                "description": source.description
+                                                }
+                        }
                     }
                 }
-            }
+                name = source.name
+
+            else:
+                t = {
+                    "handle": self.app_handle,
+                    "method": "CreateMeasure",
+                    "params": {
+                        "qProp": {
+                            "qInfo": {
+                                "qType": "measure"
+                            },
+                            "qMeasure": {
+                                "qLabel": label,
+                                "isCustomFormatted": True,
+                                "numFormatFromTemplate": False,
+                                "qNumFormat": {
+                                                    "qType": format_type,
+                                                    "qnDec": format_ndec,
+                                                    'qUseThou': format_use_thou,
+                                                    "qDec": format_dec,
+                                                    'qThou': format_thou
+                                                        },
+                                "coloring": {"baseColor": {"color": base_color,
+                                    'index': 1}},
+                                "qLabelExpression": label_expression,
+                                "qDef": definition,
+                                "qGrouping": 0,
+                                "qExpressions": [
+                                    ""
+                                ],
+                                "qActiveExpression": 0
+                            },
+                            "qMetaDef": {
+                                "title": name,
+                                "description": description
+                                                }
+                        }
+                    }
+                }
             query_result = query(self.parent.ws, t)
             
             if 'result' in query_result and 'qReturn' in query_result['result'] and 'qHandle' in query_result['result']['qReturn'] \
@@ -1350,29 +1406,55 @@ class AppChildren():
 
                 self[name] = ms
                 self.count += 1
-                logger.info('Measure created: %s, definition: %s, label: %s', name, definition, label)
+                logger.info('Measure created: %s, definition: %s, label: %s', name, ms.definition, ms.label)
                 return True
             else: 
                 logger.error('Failed to create measure: %s', name)
                 return False
         
         if self._type == 'dimensions':
-            # if definition or labels are strings, convert them to lists
-            if isinstance(definition, str): definition = [definition]
-            if isinstance(label, str): label = [label]
-            t = {
-                "handle": self.app_handle,
-                "method": "CreateDimension",
-                "params": [{
-                        "qInfo": {"qType": "dimension"},
-                        "qDim": {
-                            "qGrouping": "N",
-                            "qFieldDefs": definition,
-                            "qFieldLabels": label
-                                },
-                        "qMetaDef": {"title": name, "description": description, "tags": []}
-                        }]
-                }
+            if source is not None:
+                mprop = source.get_layout()
+                if 'result' not in mprop or 'qLayout' not in mprop['result'] or 'qDim' not in mprop['result']['qLayout']:
+                    logger.error('AppChildren.add function, source layout is not valid')
+                    return False
+                tmprop = mprop['result']['qLayout']['qDim']
+                if 'qDimInfos' in mprop['result']['qLayout']:
+                    tmprop_infos = mprop['result']['qLayout']['qDimInfos']
+                else:
+                    tmprop_infos = []
+
+                t = {
+                    "handle": self.app_handle,
+                    "method": "CreateDimension",
+                    "params": [{
+                            "qInfo": {"qType": "dimension"},
+                            "qDim": tmprop,
+                            "qDimInfos": tmprop_infos,
+                            "qMetaDef": {"title": source.name, "description": source.description, "tags": []}
+                            }]
+                    }
+                name = source.name
+
+            else:
+                # if definition or labels are strings, convert them to lists
+                if isinstance(definition, str): definition = [definition]
+                if isinstance(label, str): label = [label]
+                t = {
+                    "handle": self.app_handle,
+                    "method": "CreateDimension",
+                    "params": [{
+                            "qInfo": {"qType": "dimension"},
+                            "qDim": {
+                                "qGrouping": "N",
+                                "qFieldDefs": definition,
+                                "qFieldLabels": label,
+                                "coloring": {'baseColor': {'color': base_color}}
+                                    },
+                            "qMetaDef": {"title": name, "description": description, "tags": []}
+                            }]
+                    }
+                
             # create new dimension
             query_result = query(self.parent.ws, t)
             
@@ -1394,6 +1476,7 @@ class AppChildren():
                     })
 
                 # add new line to df
+                self.df = _get_dim_pandas(self.ws, self.app_handle)
                 dim.id = prop_result['result']['qProp']['qInfo']['qId']
                 self.df = pd.concat([self.df, pd.DataFrame({col: [dim.id] if col == 'qInfo.qId' else None for col in self.df.columns})])
                 self.df.reset_index(inplace=True)   # otherwise the list can not be added to the df
@@ -1407,6 +1490,9 @@ class AppChildren():
                 if _find_key('qFieldLabels', prop_result): 
                     dim.label = prop_result['result']['qProp']['qDim']['qFieldLabels']
                     self.df.at[row_label, 'qDimFieldLabels'] = dim.label
+                if _find_key('coloring', prop_result):
+                    dim.base_color = prop_result['result']['qProp']['qDim']['coloring']['baseColor']['color']
+                    self.df.at[row_label, 'qDimFieldBaseColor'] = dim.base_color
 
                 #self.df['qDimFieldDefs'] = self.df['qDimFieldDefs'].astype('object')
 
@@ -1859,8 +1945,9 @@ class Dimension:
         self.app_handle = 0
         self.parent = parent
         
-        self.id, self.definition, self.label, self.label_expression = '', '', '', ''
+        self.id, self.definition, self.label, self.label_expression, self.description = '', '', '', '', ''
         self.created_date, self.modified_date = dt.datetime(year=1901, month=1, day=1), dt.datetime(year=1901, month=1, day=1)
+        self.base_color = ''
         
         
     def get_handle(self) -> int:
@@ -1881,7 +1968,7 @@ class Dimension:
         logger.debug('Dimension.get_handle function completed, name = %s', self.name)
         return self.handle
     
-    def update(self, definition: Union[str, List[str]] = None, label: Union[str, List[str]] = None) -> bool:
+    def update(self, definition: Union[str, List[str]] = None, label: Union[str, List[str]] = None, base_color: str = None) -> bool:
         """
         Update the dimension
 
@@ -1906,9 +1993,10 @@ class Dimension:
                 else: return x
             else: return y
             
-        definition, label = \
+        definition, label, base_color = \
             gn(self.definition, definition), \
-            gn(self.label, label)
+            gn(self.label, label), \
+            gn(self.base_color, base_color)
 
         t = {
           "jsonrpc": "2.0",
@@ -1923,7 +2011,8 @@ class Dimension:
               },
               "qDim": {
                   "qFieldLabels": label,
-                  "qFieldDefs": definition
+                  "qFieldDefs": definition,
+                  "coloring": {'baseColor': {'color' : base_color}}
                 },
                 "qMetaDef": {'title': self.name}
             }
@@ -1935,9 +2024,11 @@ class Dimension:
             if 'change' in query_result and len(query_result['change']) > 0:
                 self.definition = definition
                 self.label = label
+                self.base_color = base_color
                 row_label = self.parent.df.index[self.parent.df['qInfo.qId'] == self.id].tolist()[0]
                 self.parent.df.at[row_label, 'qDimFieldDefs'] = definition
                 self.parent.df.at[row_label, 'qDimFieldLabels'] = label
+                self.parent.df.at[row_label, 'qDimFieldBaseColor'] = base_color
                 
                 logger.info('Dimension updated: %s, new definition: %s, new label: %s', self.name, self.definition, self.label)
                 return True
