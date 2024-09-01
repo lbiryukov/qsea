@@ -1,6 +1,9 @@
 # History
 
-## [0.0.21] - 2024-09--01
+## [0.0.22] - 2024-09-02
+- Minor changes
+
+## [0.0.21] - 2024-09-01
 - Added sheet.copy and object.copy functions, now sheets and objects can be easily copied to another apps
 - Added measure.copy and dimension.copy functions, makes the syntax clearer
 - load function now can be rerun without recreating the app object
