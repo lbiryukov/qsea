@@ -39,19 +39,24 @@ pip install qsea
         - [Variable.get_layout()](#variableget_layout)
     - [Measure class](#measure-class)
         - [Measure properties](#measure-properties)
+        - [Measure.copy()](#measurecopy)
         - [Measure.update()](#measureupdate)
         - [Measure.delete()](#measuredelete)
         - [Measure.rename()](#measurerename)
         - [Measure.get_layout()](#measureget_layout)
+        - [Measure.get_properties()](#measureget_properties)
     - [Dimension class](#dimension-class)
         - [Dimension properties](#dimension-properties)
+        - [Dimension.copy()](#dimensioncopy)
         - [Dimension.update()](#dimensionupdate)
         - [Dimension.delete()](#dimensiondelete)
         - [Dimension.rename()](#dimensionrename)
         - [Dimension.get_layout()](#dimensionget_layout)
     - [Sheet class](#sheet-class)
         - [Sheet properties](#sheet-properties)
+        - [Sheet.copy()](#sheetcopy)
         - [Sheet.load()](#sheetload)
+        - [Sheet.clear()](#sheetclear)
         - [Sheet.get_layout()](#sheetget_layout)
     - [Field class](#field-class)
         - [Field properties](#field-properties)
@@ -60,6 +65,7 @@ pip install qsea
     - [Object class](#object-class)
         - [Object properties](#object-properties)
         - [Object.export_data()](#objectexport_data)
+        - [Object.copy()](#objectcopy)
         - [Object.load()](#objectload)
         - [Object.get_layout()](#objectget_layout)
     - [ObjectChildren class](#objectchildren-class)
@@ -446,7 +452,7 @@ Returns the json layout of the measure; a shortcut to the GetLayout method of th
 ms.get_layout()
 ```
 
-#### Measure.het_properties()
+#### Measure.get_properties()
 Returns the json properties of the measure; a shortcut to the GetProperties method of the Engine API
 
 ```python
