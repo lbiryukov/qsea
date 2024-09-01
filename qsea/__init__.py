@@ -252,7 +252,7 @@ def _get_properties(ws, handle: int) -> dict:
 
 # In[7]:
 
-def _set_properties(ws, handle: int, query: dict) -> dict:
+def _set_properties(ws, handle: int, params: dict) -> dict:
     """
     A shortcut to set object properties by its handle and set query
 
@@ -271,7 +271,7 @@ def _set_properties(ws, handle: int, query: dict) -> dict:
               "method": "SetProperties",
               "handle": handle,
               "params": [
-                query
+                params
                 ]
             })
     return zu
@@ -962,16 +962,17 @@ class App:
 
         if depth >= 2:
             for sh in self.sheets:
-                sh.load()
-                if depth >= 3:
-                    for obj in sh.objects:
-                        if obj.type in ['distributionplot', 'piechart', 'table', 'barchart',
-       'pivot-table', 'boxplot', 'histogram', 'gauge', 'bulletchart',
-       'mekkochart', 'treemap', 'waterfallchart', 'kpi', 'combochart',
-       'scatterplot']:
-                            try: obj.load()
-                            except Exception as E: logger.warning('App.load function, error loading object. Object will be ignored. %s, %s', obj.name, str(E))
-
+                try:
+                    sh.load()
+                    if depth >= 3:
+                        for obj in sh.objects:
+                            if obj.type in ['distributionplot', 'piechart', 'table', 'barchart',
+        'pivot-table', 'boxplot', 'histogram', 'gauge', 'bulletchart',
+        'mekkochart', 'treemap', 'waterfallchart', 'kpi', 'combochart',
+        'scatterplot']:
+                                try: obj.load()
+                                except Exception as E: logger.warning('App.load function, error loading object. Object will be ignored. %s, %s', obj.name, str(E))
+                except Exception as E: logger.warning('App.load function, error loading sheet. Sheet will be ignored. %s, %s', sh.name, str(E))
         logger.debug('App.load function completed, %s', self.name)
         return True
 
@@ -1060,13 +1061,17 @@ class AppChildren():
 
         logger.debug('AppChildren.load function started, _type = %s', self._type)
 
-        if self.count == 0:
-            if self._type == 'variables':
-                self.df = _get_var_pandas(self.parent.ws, self.app_handle)
-                if len(self.df) == 0:
-                    logger.debug('AppChildren.load function, no variables found')
-                    return True
-                for varName in self.df['qName']:
+        #if self.count == 0:
+        self.count = 0
+        self.children = {}
+
+        if self._type == 'variables':
+            self.df = _get_var_pandas(self.parent.ws, self.app_handle)
+            if len(self.df) == 0:
+                logger.debug('AppChildren.load function, no variables found')
+                return True
+            for varName in self.df['qName']:
+                if varName == varName:              # skip NaN values if any
                     var = Variable(self, varName)
                     var.app_handle = self.app_handle
                     
@@ -1081,12 +1086,13 @@ class AppChildren():
                     self.count += 1
                     logger.debug('AppChildren.load function, variable object created, varName = %s, var.id = %s', varName, var.id)
 
-            if self._type == 'measures':
-                self.df = _get_ms_pandas(self.parent.ws, self.app_handle)
-                if len(self.df) == 0:
-                    logger.debug('AppChildren.load function, no measures found')
-                    return True
-                for msName in self.df['qMeta.title']:
+        if self._type == 'measures':
+            self.df = _get_ms_pandas(self.parent.ws, self.app_handle)
+            if len(self.df) == 0:
+                logger.debug('AppChildren.load function, no measures found')
+                return True
+            for msName in self.df['qMeta.title']:
+                if msName == msName:             # skip NaN values if any
                     ms = Measure(self, msName)
                     ms.app_handle = self.app_handle
 
@@ -1113,21 +1119,26 @@ class AppChildren():
                     self[msName] = ms
                     self.count += 1
                     logger.debug('AppChildren.load function, measure object created, msName = %s, ms.id = %s', msName, ms.id)
-                        
-            if self._type == 'sheets':
-                self.df = _get_sheet_pandas(self.parent.ws, self.app_handle)
-                if len(self.df) == 0:
-                    logger.debug('AppChildren.load function, no sheets found')
-                    return True
-                for shName in self.df['qMeta.title']:
+                    
+        if self._type == 'sheets':
+            self.df = _get_sheet_pandas(self.parent.ws, self.app_handle)
+            if len(self.df) == 0:
+                logger.debug('AppChildren.load function, no sheets found')
+                return True
+            for shName in self.df['qMeta.title']:
+                if shName == shName:             # skip NaN values if any
                     sh = Sheet(self, shName)
                     sh.app_handle = self.app_handle
                     
                     row = self.df[self.df['qMeta.title'] == shName].iloc[0]
                     sh.id = row['qInfo.qId']
                     if 'qMeta.description' in self.df.columns: sh.description = row['qMeta.description']
-                    if 'qMeta.created_date' in self.df.columns: sh.created_date = dt.datetime.strptime(row['qMeta.createdDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
-                    if 'qMeta.modifiedDate' in self.df.columns: sh.modified_date = dt.datetime.strptime(row['qMeta.modifiedDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
+                    try: 
+                        if 'qMeta.created_date' in self.df.columns: sh.created_date = dt.datetime.strptime(row['qMeta.createdDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
+                    except: pass
+                    try:
+                        if 'qMeta.modifiedDate' in self.df.columns: sh.modified_date = dt.datetime.strptime(row['qMeta.modifiedDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
+                    except: pass
                     if 'qMeta.published' in self.df.columns: sh.published = row['qMeta.published']
                     if 'qMeta.approved' in self.df.columns: sh.approved = row['qMeta.approved']
                     if 'qMeta.owner.id' in self.df.columns: sh.owner_id = row['qMeta.owner.id']
@@ -1136,13 +1147,14 @@ class AppChildren():
                     self[shName] = sh
                     self.count += 1
                     logger.debug('AppChildren.load function, sheet object created, shName = %s, sh.id = %s', shName, sh.id)
-                    
-            if self._type == 'fields':
-                self.df = _get_field_pandas(self.parent.ws, self.app_handle)
-                if len(self.df) == 0:
-                    logger.debug('AppChildren.load function, no fields found')
-                    return True
-                for fName in self.df['qFields.qName']:
+                
+        if self._type == 'fields':
+            self.df = _get_field_pandas(self.parent.ws, self.app_handle)
+            if len(self.df) == 0:
+                logger.debug('AppChildren.load function, no fields found')
+                return True
+            for fName in self.df['qFields.qName']:
+                if fName == fName:             # skip NaN values if any
                     f = Field(fName)
                     f.app_handle = self.app_handle
                     
@@ -1160,13 +1172,14 @@ class AppChildren():
                     self[fName] = f
                     self.count += 1
                     logger.debug('AppChildren.load function, field object created, fName = %s', fName)
-                    
-            if self._type == 'dimensions':
-                self.df = _get_dim_pandas(self.parent.ws, self.app_handle)
-                if len(self.df) == 0:
-                    logger.debug('AppChildren.load function, no dimensions found')
-                    return True
-                for dimName in self.df['qMeta.title']:
+                
+        if self._type == 'dimensions':
+            self.df = _get_dim_pandas(self.parent.ws, self.app_handle)
+            if len(self.df) == 0:
+                logger.debug('AppChildren.load function, no dimensions found')
+                return True
+            for dimName in self.df['qMeta.title']:
+                if dimName == dimName:             # skip NaN values if any
                     dim = Dimension(self, dimName)
                     dim.app_handle = self.app_handle
 
@@ -1184,12 +1197,13 @@ class AppChildren():
                     self.count += 1
                     logger.debug('AppChildren.load function, dimension object created, dimName = %s, dim.id = %s', dimName, dim.id)
 
-            if self._type == 'bookmarks':
-                self.df = _get_bookmark_pandas(self.parent.ws, self.app_handle)
-                if len(self.df) == 0:
-                    logger.debug('AppChildren.load function, no bookmarks found')
-                    return True
-                for bmName in self.df['qMeta.title']:
+        if self._type == 'bookmarks':
+            self.df = _get_bookmark_pandas(self.parent.ws, self.app_handle)
+            if len(self.df) == 0:
+                logger.debug('AppChildren.load function, no bookmarks found')
+                return True
+            for bmName in self.df['qMeta.title']:
+                if bmName == bmName:             # skip NaN values if any
                     bm = Bookmark(self, bmName)
                     bm.app_handle = self.app_handle
 
@@ -1210,15 +1224,15 @@ class AppChildren():
                     self[bmName] = bm
                     self.count += 1
                     logger.debug('AppChildren.load function, bookmark object created, bmName = %s, bm.id = %s', bmName, bm.id)
-        else:
-            logger.warning('AppChildren.load function, variables already loaded, recreate the App object to reload')
-        logger.debug('AppChildren.load function finished, _type = %s', self._type)
+        # else:
+        #     logger.warning('AppChildren.load function, %s already loaded, recreate the App object to reload', self._type)
+        # logger.debug('AppChildren.load function finished, _type = %s', self._type)
         return True
 
     
     def add(self, name: str = '', definition: str = '', description: str = '', label: str = '', label_expression: str = '', format_type: str = 'U', \
                            format_ndec: int = 10, format_use_thou: int = 0, format_dec: str = ',', format_thou: str = '' \
-                            , base_color = '', source = None) -> bool:
+                            , base_color = '', source = None) -> str:
         """
         Adds a new object to the app; depending on the type of the AppChildren object, the object will be a variable, a measure, or a dimension.
 
@@ -1243,27 +1257,31 @@ class AppChildren():
             source (variable, measure or dimension, optional): Source object to be copied. Defaults to None.
 
         Returns:
-            bool: True if the object was created successfully, False otherwise.
+            str: obejct_id if the object was created successfully, None otherwise.
         """
         
         logger.debug('AppChildren.add function started, type = %s, name = %s, definition = %s, description = %s, label = %s, source = %s', \
                      self._type, name, definition, description, label, source)
         
         # check necessary parametres
-        if source is None and (name == '' or definition == ''):
+        if source is None and (name == '' or definition == '') and self._type != 'sheets':
             logger.error('AppChildren.add function, either source or both name and definition are required')
-            return False
+            return None
         
-        if source is not None and type(source) not in (Variable, Measure, Dimension):
-            logger.error('AppChildren.add function, source must be a Variable, Measure or Dimension object, %s provided', type(source))
-            return False
+        if source is not None and type(source) not in (Variable, Measure, Dimension, Sheet):
+            logger.error('AppChildren.add function, source must be a Variable, Measure, Dimension or Sheet object, %s provided', type(source))
+            return None
 
         if source is not None:
             if (type(source) == Variable and self._type != 'variables') or \
                 (type(source) == Measure and self._type != 'measures') or \
                 (type(source) == Dimension and self._type != 'dimensions'):
                 logger.error('AppChildren.add function, source type does not match AppChildren type')
-                return False
+                return None
+            
+        if source is not None and self._type == 'sheets':
+            logger.error('AppChildren.add function, source is not supported for sheets')
+            return None
 
         if self._type == 'variables':
             if source is not None:
@@ -1291,7 +1309,7 @@ class AppChildren():
             if 'error' in query_result and 'parameter' in query_result['error'] \
                     and query_result['error']['parameter'] == 'Variable already exists':
                 logger.error('Variable already exists: %s', name)
-                return False
+                return None
             
             var = Variable(self, name)
             var.app_handle = self.app_handle
@@ -1309,14 +1327,14 @@ class AppChildren():
             self[name] = var
             self.count += 1
             logger.info('Variable created: %s, definition: %s, description: %s', name, definition, description)
-            return True
+            return query_result['result']['qInfo']['qId']
         
         if self._type == 'measures':
             if source is not None:
                 mprop = source.get_layout()
                 if 'result' not in mprop or 'qLayout' not in mprop['result'] or 'qMeasure' not in mprop['result']['qLayout']:
                     logger.error('AppChildren.add function, source layout is not valid')
-                    return False
+                    return None
                 tmprop = mprop['result']['qLayout']['qMeasure']
                 
                 # label_expression is not returned correctly by get_layout(), processing seperately, handling NAN value
@@ -1411,17 +1429,17 @@ class AppChildren():
                 self[name] = ms
                 self.count += 1
                 logger.info('Measure created: %s, definition: %s, label: %s', name, ms.definition, ms.label)
-                return True
+                return query_result['result']['qInfo']['qId']
             else: 
                 logger.error('Failed to create measure: %s', name)
-                return False
+                return None
         
         if self._type == 'dimensions':
             if source is not None:
                 mprop = source.get_layout()
                 if 'result' not in mprop or 'qLayout' not in mprop['result'] or 'qDim' not in mprop['result']['qLayout']:
                     logger.error('AppChildren.add function, source layout is not valid')
-                    return False
+                    return None
                 tmprop = mprop['result']['qLayout']['qDim']
                 if 'qDimInfos' in mprop['result']['qLayout']:
                     tmprop_infos = mprop['result']['qLayout']['qDimInfos']
@@ -1503,14 +1521,82 @@ class AppChildren():
                 self[name] = dim
                 self.count += 1
                 logger.info('Dimension created: %s, definition: %s, label: %s', name, definition, label)
-                return True
+                return query_result['result']['qInfo']['qId']
             else: 
                 logger.error('Failed to create dimension: %s', name)
-                return False
+                return None
             
-        if self._type not in ['measures', 'dimensions', 'variables']:
+        if self._type == 'sheets':
+            # check existence of a target sheet with the same name
+            if self.parent.sheets.count == 0: self.parent.sheets.load()
+            if name in self.parent.sheets.df['qMeta.title'].tolist():
+                logger.error('Sheet.copy function, sheet with the same name already exists in the app, name = %s, target_app = %s', name, self.parent.name)
+                return None
+            
+            # create a blank sheet in a target app
+            t = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "CreateObject",
+                "handle": self.parent.handle,
+                "params": [
+                    {
+                    "title": name,
+                    "description": description,
+                    "qInfo": {
+                        "qType": "sheet"
+                    },
+                    "qMetaDef": {"title": name, "description": description},
+                    "qChildListDef": {
+                        "qData": {
+                        "title": "/title",
+                        "description": "/description",
+                        "meta": "/meta",
+                        "order": "/order",
+                        "type": "/qInfo/qType",
+                        "id": "/qInfo/qId",
+                        "lb": "/qListObjectDef",
+                        "hc": "/qHyperCubeDef"
+                        }
+                    },
+                    "cells": []
+                    }
+                ]
+                }
+            
+            query_result = query(self.parent.ws, t)
+            if not 'result' in query_result or not 'qInfo' in query_result['result'] or not 'qId' in query_result['result']['qInfo']:
+                logger.error('Sheet.copy function, creating a new sheet failed, name = %s', self.name)
+                return None
+            
+            sh = Sheet(self, name)
+            sh.app_handle = self.app_handle
+
+            # renew sheets data from the app
+            self.df = _get_sheet_pandas(self.ws, self.app_handle)
+            row = self.df[self.df['qMeta.title'] == name].iloc[0]
+            sh.id = row['qInfo.qId']
+            if 'qMeta.description' in self.df.columns: sh.description = row['qMeta.description']
+            try: 
+                if 'qMeta.created_date' in self.df.columns: sh.created_date = dt.datetime.strptime(row['qMeta.createdDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
+            except: pass
+            try: 
+                if 'qMeta.modifiedDate' in self.df.columns: sh.modified_date = dt.datetime.strptime(row['qMeta.modifiedDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
+            except: pass
+            if 'qMeta.published' in self.df.columns: sh.published = row['qMeta.published']
+            if 'qMeta.approved' in self.df.columns: sh.approved = row['qMeta.approved']
+            if 'qMeta.owner.id' in self.df.columns: sh.owner_id = row['qMeta.owner.id']
+            if 'qMeta.owner.name' in self.df.columns: sh.owner_name = row['qMeta.owner.name']
+
+            self[name] = sh
+            self.count += 1
+
+            logger.info('Sheet created: %s', name)
+            return query_result['result']['qInfo']['qId']
+        
+        if self._type not in ['measures', 'dimensions', 'variables', 'sheets']:
             logger.error('Creation of %s is not supported', self._type)
-            return False
+            return None
         
 
 
@@ -1667,6 +1753,8 @@ class Variable:
         logger.debug('Variable.get_layout function started, %s', self.name)
         self.get_handle()
         return _get_layout(self.parent.ws, self.handle)
+    
+
 
 
 # In[21]:
@@ -1927,6 +2015,17 @@ class Measure:
             logger.error('Failed to rename measure, old_name = %s, new_name = %s', old_name, new_name)
             return False
         
+    def copy(self, target_app: 'App') -> str:
+        """
+        Copy the measure to another app
+
+        Args: target_app (App): The target app, where the measure will be copied
+        Returns: str: ID of the measure created if successful, None otherwise
+        """
+
+        if target_app.measures.count == 0: target_app.measures.load()
+        return target_app.measures.add(source = self)
+        
     def get_layout(self) -> json:
         """
         Returns the layout of the measure
@@ -1934,6 +2033,14 @@ class Measure:
         logger.debug('Measure.get_layout function started, %s', self.name)
         self.get_handle()
         return _get_layout(self.parent.ws, self.handle)
+    
+    def get_properties(self) -> json:
+        """
+        Returns the properties of the measure
+        """
+        logger.debug('Measure.get_properties function started, %s', self.name)
+        self.get_handle()
+        return _get_properties(self.parent.ws, self.handle)
 
 
 # In[23]:
@@ -2116,6 +2223,17 @@ class Dimension:
             logger.error('Failed to rename dimension, old_name = %s, new_name = %s', old_name, new_name)
             return False
         
+    def copy(self, target_app: 'App') -> str:
+        """
+        Copy the dimension to another app
+
+        Args: target_app (App): The target app, where the dimension will be copied
+        Returns: str: ID of the dimension created if successful, null otherwise
+        """
+
+        if target_app.dimensions.count == 0: target_app.dimensions.load()
+        return target_app.dimensions.add(source = self)
+        
     def get_layout(self) -> json:
         """
         Returns the layout of the dimension
@@ -2123,6 +2241,14 @@ class Dimension:
         logger.debug('Dimension.get_layout function started, %s', self.name)
         self.get_handle()
         return _get_layout(self.parent.ws, self.handle)
+    
+    def get_properties(self) -> json:
+        """
+        Returns the properties of the dimension
+        """
+        logger.debug('Dimension.get_properties function started, %s', self.name)
+        self.get_handle()
+        return _get_properties(self.parent.ws, self.handle)
 
 
 class Sheet:
@@ -2168,6 +2294,111 @@ class Sheet:
         if self.objects.load(): return True
         else: return False
 
+    def clear(self) -> bool:
+        # clear all sheet objects
+        logger.debug('Sheet.clear function started, name = %s', self.name)
+        self.get_handle()
+        
+        # destroying all children
+        res = query(self.parent.ws, {
+            "jsonrpc": "2.0",
+            "id": 8,
+            "method": "DestroyAllChildren",
+            "handle": self.handle,
+            "params": []
+            })
+        
+        if 'result' not in res:
+            logger.error('Sheet.clear function, DestroyAllChildren method failed, name = %s', self.name)
+            return False
+        
+        # clear all cells
+        current_properties = self.get_properties()
+        current_properties['result']['qProp']['cells'] = []
+        res = _set_properties(self.parent.ws, \
+                                    self.handle, current_properties['result']['qProp'])
+
+        if 'result' not in res:
+            logger.error('Sheet.clear function, clearing cells failed, name = %s', self.name)
+            return False
+        
+        self.load()
+        logger.debug('Sheet.clear function finished, name = %s', self.name)
+        return True
+        
+    def delete(self) -> bool:
+        """
+        Delete the sheet
+
+        Returns:
+            True if the sheet was deleted successfully, False otherwise
+        """
+
+        logger.debug('Sheet.delete function started, name = %s', self.name)
+        query_result = query(self.parent.ws, {
+              "jsonrpc": "2.0",
+              "id": 10,
+              "method": "DestroyObject",
+              "handle": self.app_handle,
+              "params": [
+                self.id
+              ]
+            })
+        
+        # delete value from sheets collection
+        if 'result' in query_result and 'qSuccess' in query_result['result'] and query_result['result']['qSuccess']:
+            del self.parent[self.name]
+            self.parent.df = self.parent.df[self.parent.df['qInfo.qId'] != self.id]
+            logger.info ('Sheet deleted: %s', self.name)
+            return True
+        else:
+            logger.error('Failed to delete the sheet: %s', self.name)
+            return False
+        
+    
+    def copy(self, target_app: App, master_match: str = 'name') -> str:
+        """
+        Creates a copy of the sheet in the target app
+        Args: target_app: App object
+        Returns: str, ID of the new sheet if succesful, None otherwise
+        """
+
+        logger.debug('Sheet.copy function started, name = %s, target_app = %s', self.name, target_app.name)
+        
+        # check existence of a target sheet with the same name
+        if target_app.sheets.count == 0: target_app.sheets.load()
+        if self.name in target_app.sheets.df['qMeta.title'].tolist():
+            logger.error('Sheet.copy function, sheet with the same name already exists in the target app, name = %s, target_app = %s', self.name, target_app.name)
+            return None
+        
+        # create a blank sheet in a target app
+        source_sheet_properties = self.get_properties()
+        t = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "CreateObject",
+                "handle": target_app.handle,
+                "params": [
+                    source_sheet_properties['result']['qProp']
+                    ]
+                }
+        t['params'][0]['title'] = self.name
+        t['params'][0]['description'] = self.description
+        query_result = query(target_app.ws, t)
+        
+        # to revise: add query_result check 
+
+        target_app.sheets.load()
+        target_sheet = target_app.sheets[self.name]
+
+        # copy all objects to the new sheet
+        self.objects.load()
+        for obj in self.objects:
+            try: obj.copy(target_app, target_sheet, master_match = master_match)
+            except Exception as E: logger.exception('Sheet.copy function, copying object failed, name = %s, target_app = %s, error_text: %s', obj.name, target_app.name, E)
+
+        return target_sheet.id
+
     def get_layout(self) -> json:
         """
         Returns the layout of the sheet
@@ -2175,6 +2406,15 @@ class Sheet:
         logger.debug('Sheet.get_layout function started, %s', self.name)
         self.get_handle()
         return _get_layout(self.parent.ws, self.handle)
+    
+    def get_properties(self) -> json:
+        """
+        Returns the properties of the sheet
+        """
+        logger.debug('Sheet.get_properties function started, %s', self.name)
+        self.get_handle()
+        return _get_properties(self.parent.ws, self.handle)
+    
 
 # In[27]:
 
@@ -2218,36 +2458,40 @@ class SheetChildren():
         Loads all sheer objects from Qlik Sense into the collection
         """
         logger.debug('SheetChildren.load started, %s', self.parent.name)
-        if self.count == 0:
-            self.sheet_handle = self.parent.get_handle()
-            self.df = _get_sheet_objects_pandas(self.parent.parent.ws, self.sheet_handle)
-            if len(self.df) == 0:
-                logger.warning('SheetChildren.load function, no objects on the sheet %s', self.parent.name)
-                return False
-            else:
-                for objName in self.df['name']:
-                    obj = Object(self, objName)
-                    obj.sheet_handle = self.sheet_handle
+        #if self.count == 0:
+        self.count = 0
+        self.children = {}
 
-                    row = self.df[self.df['name'] == objName].iloc[0]
-                    obj.id = objName
-                    obj.type = row['type']
-                    obj.col = row['col']
-                    obj.row = row['row']
-                    obj.colspan = row['colspan']
-                    obj.rowspan = row['rowspan']
-                    obj.bounds_y = row['bounds.y']
-                    obj.bounds_x = row['bounds.x']
-                    obj.bounds_width = row['bounds.width']
-                    obj.bounds_height = row['bounds.height']
-
-                    self[objName] = obj
-                    self.count += 1
+        self.sheet_handle = self.parent.get_handle()
+        self.df = _get_sheet_objects_pandas(self.parent.parent.ws, self.sheet_handle)
+        if len(self.df) == 0:
+            logger.warning('SheetChildren.load function, no objects on the sheet %s', self.parent.name)
+            return False
         else:
-            logger.warning('SheetChildren.load function, objects already loaded, recreate the App object to reload')
+            for objName in self.df['name']:
+                obj = Object(self, objName)
+                obj.sheet_handle = self.sheet_handle
+
+                row = self.df[self.df['name'] == objName].iloc[0]
+                obj.id = objName
+                obj.type = row['type']
+                obj.col = row['col']
+                obj.row = row['row']
+                obj.colspan = row['colspan']
+                obj.rowspan = row['rowspan']
+                obj.bounds_y = row['bounds.y']
+                obj.bounds_x = row['bounds.x']
+                obj.bounds_width = row['bounds.width']
+                obj.bounds_height = row['bounds.height']
+
+                self[objName] = obj
+                self.count += 1
+        # else:
+        #     logger.warning('SheetChildren.load function, objects already loaded, recreate the App object to reload')
 
         logger.debug('SheetChildren.load finished, %s objects loaded', self.count)
         return True
+
     
 
 
@@ -2357,6 +2601,161 @@ class Object:
         logger.debug('Object.get_layout function started, %s', self.name)
         self.get_handle()
         return _get_layout(self.sheet.parent.ws, self.handle)
+    
+    def get_properties(self) -> json:
+        """
+        Returns the properties of the object
+        """
+        logger.debug('Object.get_properties function started, %s', self.name)
+        self.get_handle()
+        return _get_properties(self.sheet.parent.ws, self.handle)
+    
+        
+    def copy(self, target_app, target_sheet, col: int = None, row: int = None, colspan: int = None \
+             , rowspan: int = None, master_match: str = 'name') -> str:
+        """
+        Copies the object to the target sheet
+
+        Args:
+            target_app (App): The target app, where the object will be copied
+            target_sheet (Sheet): The target sheet, where the object will be copied
+            col (int, optional): The column, where the object will be copied. Defaults to None. If None, the column of the source is used
+            row (int, optional): The row, where the object will be copied. Defaults to None. If None, the row of the source is used
+            colspan (int, optional): The column span of the object. Defaults to None. If None, the column span of the source is used
+            rowspan (int, optional): The row span of the object. Defaults to None. If None, the row span of the source is used
+            master_match (str, optional): Defines how to match master measures and dimensions in the object. Defaults to 'name'.
+                Possible values:
+                    - 'name': Match by name; the target object will be created with master measures with same names
+                    - 'id': Match by id; the target object will be created with master measures with same ids
+
+        Returns:
+            str: ID of the object created if successful, null otherwise
+        """
+        logger.debug('Object.copy started, sheet = %s, object_id = %s', self.sheet.name, self.name)
+
+        # check necessary parametres
+        if type(target_app) != App:
+            logger.error('Object.copy function failed, type of target_app should be App')
+            return False
+        if type(target_sheet) != Sheet:
+            logger.error('Object.copy function failed, type of target_sheet should be Sheet')
+            return False
+        
+        if master_match not in ['name', 'id']:
+            logger.error('Object.copy function failed, invalid value for master_match parameter, should be "name" or "id"')
+            return False
+
+        self.get_handle()
+
+        # obtain the properties of the source object
+        source_properties = _get_properties(self.sheet.parent.ws, self.handle)
+
+        # set master measure and master dimension relations
+        source_app = self.sheet.parent.parent
+        if source_app.measures.count == 0: source_app.measures.load()
+        if source_app.dimensions.count == 0: source_app.dimensions.load()
+        if target_app.measures.count == 0: target_app.measures.load()
+        if target_app.dimensions.count == 0: target_app.dimensions.load()
+
+        logger.debug('Object.copy, source_app.measures.count = %s, target_app.measures.count = %s', source_app.measures.count, target_app.measures.count)
+
+        if master_match == 'name':
+            measures_match = source_app.measures.df.merge(target_app.measures.df, \
+                        how='left', left_on='qMeta.title', right_on='qMeta.title', \
+                        suffixes=('_source', '_target'))[['qInfo.qId_source', 'qMeta.title', 'qInfo.qId_target']]
+            
+            dimensions_match = source_app.dimensions.df.merge(target_app.dimensions.df, \
+                        how='left', left_on='qMeta.title', right_on='qMeta.title', \
+                        suffixes=('_source', '_target'))[['qInfo.qId_source', 'qMeta.title', 'qInfo.qId_target']]
+
+            if 'qHyperCubeDef' in source_properties['result']['qProp']:
+                for ms in source_properties['result']['qProp']['qHyperCubeDef']['qMeasures']:
+                    if 'qLibraryId' in ms:
+                        ms_name = source_app.measures.df.loc[source_app.measures.df['qInfo.qId'] == ms['qLibraryId'], 'qMeta.title'].values[0]
+                        if ms_name not in target_app.measures.df['qMeta.title'].values:
+                            logger.warning('Object copy function warning: Master measure %s not found in target app', ms_name)
+                        else:
+                            ms['qLibraryId'] = measures_match.loc[measures_match['qMeta.title'] == ms_name, 'qInfo.qId_target'].values[0]
+
+                for dim in source_properties['result']['qProp']['qHyperCubeDef']['qDimensions']:
+                    if 'qLibraryId' in dim:
+                        dim_name = source_app.dimensions.df.loc[source_app.dimensions.df['qInfo.qId'] == dim['qLibraryId'], 'qMeta.title'].values[0]
+                        if dim_name not in target_app.dimensions.df['qMeta.title'].values:
+                            logger.warning('Object copy function warning: Master dimension %s not found in target app', dim_name)
+                        else:
+                            dim['qLibraryId'] = dimensions_match.loc[dimensions_match['qMeta.title'] == dim_name, 'qInfo.qId_target'].values[0]
+
+        
+        def _isnullbounds(json, value):
+            if value in json:
+                if json[value] is None: return 0
+                else: return json[value]
+            else: return 0
+
+        
+        # get the source object coords
+        source_sheet_properties = _get_properties(self.sheet.parent.ws, self.sheet.handle)
+        for cl in source_sheet_properties['result']['qProp']['cells']:
+            if cl['name'] == self.name:
+                if col is None: col = cl['col']
+                if row is None: row = cl['row']
+                if colspan is None: colspan = cl['colspan']
+                if rowspan is None: rowspan = cl['rowspan']
+                bounds_y = _isnullbounds(cl['bounds'], 'y')
+                bounds_x = _isnullbounds(cl['bounds'], 'x')
+                bounds_width = _isnullbounds(cl['bounds'], 'width')
+                bounds_height = _isnullbounds(cl['bounds'], 'height')
+                break
+
+        logger.debug('bounds_y: %s, bounds_x: %s, bounds_width: %s, bounds_height: %s', bounds_y, bounds_x, bounds_width, bounds_height)
+        
+        # get handle of the target sheet
+        target_sheet.get_handle()
+
+        # create a child object on the target sheet
+        create_child_answer = query(target_sheet.parent.ws, {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "CreateChild",
+            "handle": target_sheet.handle,
+            "params": [
+                    source_properties['result']['qProp']
+            ]
+            })
+        
+        # get id of the created object
+        if 'result' not in create_child_answer or \
+                'qReturn' not in create_child_answer['result'] or \
+                'qGenericId' not in create_child_answer['result']['qReturn']:
+            logger.error('Could not create child object, answer: %s', create_child_answer)
+            return False
+        
+        new_object_id = create_child_answer['result']['qReturn']['qGenericId']
+
+        # add the child object to the target sheet properties
+        target_sheet_properties = _get_properties(target_sheet.parent.ws, target_sheet.handle)
+        target_sheet_properties['result']['qProp']['cells'].append({'name': new_object_id,
+            'type': self.type,
+            'col': col,
+            'row': row,
+            'colspan': colspan,
+            'rowspan': rowspan,
+            'bounds': {'y': bounds_y,
+            'x': bounds_x,
+            'width': bounds_width,
+            'height': bounds_height}})
+        
+        # apply the target sheet properties
+        set_sheet_prop = _set_properties(target_sheet.parent.ws, \
+                                         target_sheet.handle, target_sheet_properties['result']['qProp'])
+        
+        if 'result' in set_sheet_prop:
+            return new_object_id
+        else:
+            return None
+
+        
+        
 
 
 # In[29]:
@@ -2760,79 +3159,82 @@ class ObjectChildren():
                 if _type == str: return ''
                 else: return 0
 
-        if self.count == 0:
-            if self._type == 'objectDimensions':
-                self.parentHandle = self.parent.get_handle()
-                if self.parentHandle is None:   # upd 16.08.2024
-                    logger.warning('Unable to retrieve handle for object %s', self.parent.name)
-                    return False
-                self.df = _get_object_dim_pandas(self.parent.parent.parent.parent.ws, self.parentHandle)
-                if len(self.df) == 0:
-                    logger.debug('No dimensions found for object %s', self.parent.name)
-                    return True
-                # since some cId can be empty, we need to fill them with some values; qsea_id column marks those values
-                mask = self.df['qDef.cId'].isnull()
-                self.df['qDef.cId'] = self.df['qDef.cId'].apply(lambda x: str(uuid.uuid4()) if pd.isnull(x) else x)
-                self.df.loc[mask, 'qsea_id'] = 1
-                self.df['qsea_id'] = self.df['qsea_id'].fillna(0)
+        #if self.count == 0:
+        self.count = 0
+        self.children = {}
 
-                for dimId in self.df['qDef.cId']:
-                    dim = ObjectDimension(self, dimId)
-                    dim.app_handle = self.app_handle
-                    dim.index = self.count
-                    
-                    row = self.df[self.df['qDef.cId'] == dimId].iloc[0]
-                    dim.id = dimId
-                    dim.qsea_id = pick(row, 'qsea_id')
-                    dim.library_id = pick(row, 'qLibraryId')
-                    dim.definition = pick(row, 'qDef.qFieldDefs')
-                    dim.label = pick(row, 'qDef.qFieldLabels')
-                    dim.label_expression = pick(row, 'qDef.qLabelExpression')
-                    dim.calc_condition = pick(row, 'qCalcCondition.qCond.qv')
+        if self._type == 'objectDimensions':
+            self.parentHandle = self.parent.get_handle()
+            if self.parentHandle is None:   # upd 16.08.2024
+                logger.warning('Unable to retrieve handle for object %s', self.parent.name)
+                return False
+            self.df = _get_object_dim_pandas(self.parent.parent.parent.parent.ws, self.parentHandle)
+            if len(self.df) == 0:
+                logger.debug('No dimensions found for object %s', self.parent.name)
+                return True
+            # since some cId can be empty, we need to fill them with some values; qsea_id column marks those values
+            mask = self.df['qDef.cId'].isnull()
+            self.df['qDef.cId'] = self.df['qDef.cId'].apply(lambda x: str(uuid.uuid4()) if pd.isnull(x) else x)
+            self.df.loc[mask, 'qsea_id'] = 1
+            self.df['qsea_id'] = self.df['qsea_id'].fillna(0)
 
-                    self[dimId] = dim
-                    self.count += 1
-
-            if self._type == 'objectMeasures':
-                self.parentHandle = self.parent.get_handle()
-                if self.parentHandle is None:
-                    logger.warning('Unable to retrieve handle for object %s', self.parent.name)
-                    return False
-                logger.debug('parentHandle: %s', self.parentHandle)
-                self.df = _get_object_ms_pandas(self.parent.parent.parent.parent.ws, self.parentHandle)
-                if len(self.df) == 0:
-                    logger.debug('No measures found for object %s', self.parent.name)
-                    return True
+            for dimId in self.df['qDef.cId']:
+                dim = ObjectDimension(self, dimId)
+                dim.app_handle = self.app_handle
+                dim.index = self.count
                 
-                # since some cId can be empty, we need to fill them with some values; qsea_id column marks those values
-                mask = self.df['qDef.cId'].isnull()
-                self.df['qDef.cId'] = self.df['qDef.cId'].apply(lambda x: str(uuid.uuid4()) if pd.isnull(x) else x)
-                self.df.loc[mask, 'qsea_id'] = 1
-                self.df['qsea_id'] = self.df['qsea_id'].fillna(0)
+                row = self.df[self.df['qDef.cId'] == dimId].iloc[0]
+                dim.id = dimId
+                dim.qsea_id = pick(row, 'qsea_id')
+                dim.library_id = pick(row, 'qLibraryId')
+                dim.definition = pick(row, 'qDef.qFieldDefs')
+                dim.label = pick(row, 'qDef.qFieldLabels')
+                dim.label_expression = pick(row, 'qDef.qLabelExpression')
+                dim.calc_condition = pick(row, 'qCalcCondition.qCond.qv')
 
-                for msId in self.df['qDef.cId']:
-                    ms = ObjectMeasure(self, msId)
-                    ms.app_handle = self.app_handle
-                    ms.index = self.count
+                self[dimId] = dim
+                self.count += 1
 
-                    row = self.df[self.df['qDef.cId'] == msId].iloc[0]
-                    ms.id = msId
-                    ms.library_id = pick(row, 'qLibraryId')
-                    ms.definition = pick(row, 'qDef.qDef')
-                    ms.label = pick(row, 'qDef.qLabel')
-                    ms.label_expression = pick(row, 'qDef.qLabelExpression')
-                    ms.calc_condition = pick(row, 'qCalcCondition.qCond.qv')
-                    ms.format_type = pick(row, 'qDef.qNumFormat.qType')
-                    ms.format_ndec = pick(row, 'qDef.qNumFormat.qnDec', int)
-                    ms.format_use_thou = pick(row, 'qDef.qNumFormat.qUseThou', int)
-                    ms.format_dec = pick(row, 'qDef.qNumFormat.qDec')
-                    ms.format_thou = pick(row, 'qDef.qNumFormat.qThou')
+        if self._type == 'objectMeasures':
+            self.parentHandle = self.parent.get_handle()
+            if self.parentHandle is None:
+                logger.warning('Unable to retrieve handle for object %s', self.parent.name)
+                return False
+            logger.debug('parentHandle: %s', self.parentHandle)
+            self.df = _get_object_ms_pandas(self.parent.parent.parent.parent.ws, self.parentHandle)
+            if len(self.df) == 0:
+                logger.debug('No measures found for object %s', self.parent.name)
+                return True
+            
+            # since some cId can be empty, we need to fill them with some values; qsea_id column marks those values
+            mask = self.df['qDef.cId'].isnull()
+            self.df['qDef.cId'] = self.df['qDef.cId'].apply(lambda x: str(uuid.uuid4()) if pd.isnull(x) else x)
+            self.df.loc[mask, 'qsea_id'] = 1
+            self.df['qsea_id'] = self.df['qsea_id'].fillna(0)
 
-                    self[msId] = ms
-                    self.count += 1
-        else:
-            logger.warning('ObjectChildren.load function, %s already loaded, recreate the App object to reload', self._type)
-            return False
+            for msId in self.df['qDef.cId']:
+                ms = ObjectMeasure(self, msId)
+                ms.app_handle = self.app_handle
+                ms.index = self.count
+
+                row = self.df[self.df['qDef.cId'] == msId].iloc[0]
+                ms.id = msId
+                ms.library_id = pick(row, 'qLibraryId')
+                ms.definition = pick(row, 'qDef.qDef')
+                ms.label = pick(row, 'qDef.qLabel')
+                ms.label_expression = pick(row, 'qDef.qLabelExpression')
+                ms.calc_condition = pick(row, 'qCalcCondition.qCond.qv')
+                ms.format_type = pick(row, 'qDef.qNumFormat.qType')
+                ms.format_ndec = pick(row, 'qDef.qNumFormat.qnDec', int)
+                ms.format_use_thou = pick(row, 'qDef.qNumFormat.qUseThou', int)
+                ms.format_dec = pick(row, 'qDef.qNumFormat.qDec')
+                ms.format_thou = pick(row, 'qDef.qNumFormat.qThou')
+
+                self[msId] = ms
+                self.count += 1
+        # else:
+        #     logger.warning('ObjectChildren.load function, %s already loaded, recreate the App object to reload', self._type)
+        #     return False
         logger.debug('ObjectChildren.load finished, sheet = %s, object = %s, _type = %s', self.sheet.name, self.parent.name, self._type)
         return True
             

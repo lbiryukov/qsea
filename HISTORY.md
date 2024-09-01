@@ -1,7 +1,15 @@
 # History
 
+## [0.0.21] - 2024-09--01
+- Added sheet.copy and object.copy functions, now sheets and objects can be easily copied to another apps
+- Added measure.copy and dimension.copy functions, makes the syntax clearer
+- load function now can be rerun without recreating the app object
+- measures.add, dimensions.add and variables.add now return the ID of the object created (None if failed)
+- Added sheets.add function, which creates a new sheet in the app
+- Added sheet.clear function, which clears all objects from a sheet
+
 ## [0.0.20] - 2024-08-26
-- Fixes minor bugs
+- Fixed minor bugs
 
 ## [0.0.19] - 2024-08-25
 - Added bookmark support

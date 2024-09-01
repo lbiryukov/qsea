@@ -140,11 +140,39 @@ Let's copy the set of master dimensions into a new app:
 ```python
 source_app = qsea.App(conn, 'Source AppName')
 target_app = qsea.App(conn, 'Target AppName')
+source_app.dimensions.load()
+target_app.dimensions.load()
+
+for dim in source_app.dimensions:
+    if dim.name not in [target_dim.name for target_dim in target_app.dimensions]: 
+        dim.copy(target_app = target_app)
+
+target_app.save()
+```
+
+Besides master measures, master dimensions, and variables, tables and charts in the App can also be uploaded.
+```python
+app.load()
+sh = app.sheets['MySheet']
+sh.load()
+for obj in sh.objects:
+    obj.load()
+    for ms on obj.measures:
+        print(ms.definition)
+```
+
+Objects and whole sheet can be copied to another app:
+```python
+source_app = qsea.App(conn, 'Source AppName')
+target_app = qsea.App(conn, 'Target AppName')
 source_app.load()
 target_app.load()
 
-for dim in source_app.dimensions:
-    if dim.name not in [target_dim.name for target_dim in target_app.dimensions]: target_app.dimensions.add (name = dim.name, definition = dim.definition)
+source_sh = source_app.sheets['SheetToCopy']
+source_sh.copy(target_app = target_app)
+
+source_obj = source_app.sheets['SheetWithObject'].objects['SourceObjectID']
+source_obj.copy(target_app = target_app, target_sheet = target_app.sheets['TargetSheet'])
 
 target_app.save()
 ```
@@ -155,18 +183,7 @@ Note that as it stands, only basic properties, such as names, definitions, and a
 
 Most read-only operations (such as loading apps) can be performed on published apps. However, it is recommended to modify objects only in unpublished apps.
 
-Besides master measures, master dimensions, and variables, tables and charts in the App can also be uploaded.
-
 It's highly recommended to make a backup copy of your application.
-
-```python
-app.load()
-sh = app.sheets['MySheet']
-sh.load()
-for obj in sh.objects:
-    for ms on obj.measures:
-        print(ms.definition)
-```
 
 Good luck!
 
@@ -227,7 +244,7 @@ app.variables.df
 app.measures.df
 ``` 
 #### AppChildren.add()
-Use the `add()` function to add new variables, master measures or master dimensions to the app. 
+Use the `add()` function to add new variables, master measures, master dimensions or sheets to the app. 
 
 Args:
 * name (str): Name of the object to be created.
@@ -249,13 +266,14 @@ Args:
 * base_color (str, optional): Base color (hex) for the object to be created. Defaults to None.
 * source (variable, measure or dimension, optional): Source object for the object to be created. Defaults to None.
 
-Returns: True if the object was created successfully, False otherwise.
+Returns: ID of the object created, if created successfully, None otherwise.
 Only parameters applicable to the specific class will be used
 ```python
-App.variables.add(name = 'MyVar', definition = 'sum(Sales)')
-App.measures.add(name = 'MyFunc', definition = 'sum(Sales)', format_type = 'F')
-App.dimensions.add(name = 'MyDim', definition = 'Customer')
-App.measures.add(source = App1.measures['MyFunc'])
+app.variables.add(name = 'MyVar', definition = 'sum(Sales)')
+app.measures.add(name = 'MyFunc', definition = 'sum(Sales)', format_type = 'F')
+app.dimensions.add(name = 'MyDim', definition = 'Customer')
+app.measures.add(source = App1.measures['MyFunc'])
+app.sheets.add(name = 'MySheet')
 ```
 
 ### Variable class
@@ -361,6 +379,12 @@ for ms in app.measures:
     - created_date: creation date of the measure, as stored in Qlik Sense
     - modified_date: date of the last modification of the measure, as stored in Qlik Sense
 
+#### Measure.copy()
+Creates a copy of the master measure in another app
+
+Args: target_app (App): The target app, where the measure will be copied
+Returns: str: ID of the measure created if successful, None otherwise
+
 #### Measure.update()
 Updates the measure on the Qlik Sense Server
 
@@ -422,6 +446,13 @@ Returns the json layout of the measure; a shortcut to the GetLayout method of th
 ms.get_layout()
 ```
 
+#### Measure.het_properties()
+Returns the json properties of the measure; a shortcut to the GetProperties method of the Engine API
+
+```python
+ms.get_properties()
+```
+
 ### Dimension class
 The class represents master dimensions of the application and is a member of the App.dimensions collection. You can access a specific dimension by its name or iterate through them. Note that hierarchical dimensions are not yet supported."
 
@@ -445,6 +476,12 @@ for dim in app.dimensions:
     - parent: AppChildren object; you can access the App class object like this `dim.parent.parent`
     - created_date: creation date of the dimension, as stored in Qlik Sense
     - modified_date: date of the last modification of the dimension, as stored in Qlik Sense
+
+#### Dimension.copy()
+Creates a copy of the master dimension in another app
+
+Args: target_app (App): The target app, where the dimension will be copied
+Returns: str: ID of the dimension created if successful, None otherwise
 
 #### Dimension.update()
 Updates the dimension on the Qlik Sense Server
@@ -517,6 +554,24 @@ for sh in app.sheets:
     - owner_id: GUID of the owner of the sheet
     - owner_name: name of the owner of the sheet
 
+#### Sheet.copy()
+Creates a copy of the sheet in another app. Some objects, not accessible via API (such as buttons) are not copied.
+
+Args: 
+* target_app (App): The target app, where the sheet will be copied
+* master_match (str): 'name' by default: master measures and dimensions in the new object are matched by name. If 'id', they are matched by id.
+Returns: str: ID of the sheet created if successful, None otherwise
+
+```python
+source_app = qsea.App(conn, 'Source AppName')
+target_app = qsea.App(conn, 'Target AppName')
+source_app.load()
+target_app.load()
+
+source_sh = source_app.sheets['SheetToCopy']
+source_sh.copy(target_app = target_app)
+```
+
 #### Sheet.load()
 Loads objects from the sheet in a Qlik Sense application into a Sheet class object
 
@@ -527,6 +582,9 @@ sh.load()
 for obj in sh.objects:
     print(obj.type)
 ```
+
+#### Sheet.clear()
+Clears all objects from the sheet in a Qlik Sense application
 
 #### Sheet.get_layout()
 Returns the json layout of the sheet; a shortcut to the GetLayout method of the Engine API
@@ -601,7 +659,22 @@ Args:
         
 Returns: the path to the downloaded file in case of success, None if failed
 
+#### Object.copy()
+Creates a copy of the object in the specified sheet of another app
 
+Args: 
+* target_app (App): The target app, where the sheet will be copied
+* target_sheet (Sheet): The target sheet, where the object will be copied
+* col (int, optional): The column number of the new object, None by default (the column of the source object is used)
+* row (int, optional): The row number of the new object, None by default (the row of the source object is used)
+* colspan (int, optional): The number of columns occupied by the new object, None by default (the colspan of the source object is used)
+* rowspan (int, optional): The number of rows occupied by the new object, None by default (the rowspan of the source object is used)
+* master_match (str): 'name' by default: master measures and dimensions in the new object are matched by name. If 'id', they are matched by id.
+Returns: str: ID of the sheet created if successful, None otherwise
+
+```python
+source_object.copy(target_app, target_sheet)
+```
 
 #### Object.load()
 Loads measures and dimensions of the object in a Qlik Sense application into an Object class instance.
