@@ -4,7 +4,7 @@ QSEA refers to the Qlik Sense Engine API.
 
 ## Description
 
-QSEA is designed to automate basic operations with Qlik Sense Enterprise apps in a Pythonic way. With QSEA, you can quickly view and edit variables, master measures, and dimensions, as well as main sheet objects. For example, you can replace variables in all master measures of your app with just one line of code.
+QSEA is designed to automate basic operations with Qlik Sense Enterprise apps in a Pythonic way. With QSEA, you can quickly view and edit variables, master measures, dimensions and sheet charts. For example, you can replace variables in all master measures of your app with just one line of code:
 
 ```python
 for ms in App.measures: ms.update(definition = replace(ms.definition, '$(var1)', '$(var2)'))
@@ -12,7 +12,11 @@ for ms in App.measures: ms.update(definition = replace(ms.definition, '$(var1)',
 or quickly move all measures from one app to another:
 
 ```python
-for ms in App1.measures: App2.measures.add(name = ms.name, definition = ms.definition)
+for ms in source_app.measures: ms.copy(target_app)
+```
+or copy a sheet with all charts from one app to another:
+```python
+source_app.sheets['Source_sheet_name'].copy(target_app)
 ```
 
 ## Installation
