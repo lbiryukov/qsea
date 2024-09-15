@@ -1,5 +1,8 @@
 # History
 
+## [0.0.23] - 2024-09-15
+- Fixed a bug in the sheet.copy function that sometimes caused objects to be duplicated on the target sheet
+
 ## [0.0.22] - 2024-09-02
 - Minor changes
 

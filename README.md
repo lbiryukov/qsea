@@ -81,6 +81,7 @@ pip install qsea
         - [ObjectDimension properties](#objectdimension-properties)
         - [ObjectDimension.update()](#objectdimensionupdate)
         - [ObjectDimension.delete()](#objectdimensiondelete)
+- [Roadmap](#roadmap)
 - [License](#license)
 
 ## Getting started
@@ -565,7 +566,7 @@ for sh in app.sheets:
     - owner_name: name of the owner of the sheet
 
 #### Sheet.copy()
-Creates a copy of the sheet in another app. Some objects, not accessible via API (such as buttons) are not copied.
+Creates a copy of the sheet in another app
 
 Args: 
 * target_app (App): The target app, where the sheet will be copied
@@ -581,6 +582,8 @@ target_app.load()
 source_sh = source_app.sheets['SheetToCopy']
 source_sh.copy(target_app = target_app)
 ```
+
+Note: Some objects, not accessible via API (such as buttons) are not copied. Copying of conatainers and filterpanes is not supported. Master objects can be copied correctly only if they have 1-1 correspondence between the source and target apps and have the same IDs. It can be used as a workaround for the filterpane copy problem in some cases.
 
 #### Sheet.load()
 Loads objects from the sheet in a Qlik Sense application into a Sheet class object
@@ -843,6 +846,13 @@ dim = app.dimensions['dimension_id']
 dim.delete()
 app.save()
 ```
+
+## Roadmap
+* support for container copy (including filterpane)
+* support for master item tags
+* support for adding dimensions and measures to the object
+* support for master objects in the app
+* support for hierarchical dimensions
 
 
 ## License

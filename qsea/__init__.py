@@ -1855,7 +1855,7 @@ class Measure:
 
         # check if old values exist; leave old values if new values are empty
         def gn(x, y):
-            if y is None:
+            if y is None or y != y:
                 if str(x) == 'nan': return ''
                 else: return str(x)
             elif type(y) == str:
@@ -2394,7 +2394,10 @@ class Sheet:
         # copy all objects to the new sheet
         self.objects.load()
         for obj in self.objects:
-            try: obj.copy(target_app, target_sheet, master_match = master_match)
+            try: 
+                obj.copy(target_app, target_sheet, master_match = master_match, add_cells = False)
+                # target_sheet.load()
+                # print(len(target_sheet.objects.df))
             except Exception as E: logger.exception('Sheet.copy function, copying object failed, name = %s, target_app = %s, error_text: %s', obj.name, target_app.name, E)
 
         return target_sheet.id
@@ -2612,7 +2615,7 @@ class Object:
     
         
     def copy(self, target_app, target_sheet, col: int = None, row: int = None, colspan: int = None \
-             , rowspan: int = None, master_match: str = 'name') -> str:
+             , rowspan: int = None, master_match: str = 'name', add_cells: bool = True) -> str:
         """
         Copies the object to the target sheet
 
@@ -2627,6 +2630,8 @@ class Object:
                 Possible values:
                     - 'name': Match by name; the target object will be created with master measures with same names
                     - 'id': Match by id; the target object will be created with master measures with same ids
+            add_cells (bool, optional): Defines if the cells of the object should be added to the target sheet. Defaults to True.
+                Should be always true except 1:1 copy of the whole sheet.
 
         Returns:
             str: ID of the object created if successful, null otherwise
@@ -2732,27 +2737,31 @@ class Object:
         
         new_object_id = create_child_answer['result']['qReturn']['qGenericId']
 
-        # add the child object to the target sheet properties
-        target_sheet_properties = _get_properties(target_sheet.parent.ws, target_sheet.handle)
-        target_sheet_properties['result']['qProp']['cells'].append({'name': new_object_id,
-            'type': self.type,
-            'col': col,
-            'row': row,
-            'colspan': colspan,
-            'rowspan': rowspan,
-            'bounds': {'y': bounds_y,
-            'x': bounds_x,
-            'width': bounds_width,
-            'height': bounds_height}})
+        if add_cells:
+            # add the child object to the target sheet properties; this is needed to make the object visible
+            # disabled in case of making a copy of the whole sheet
+            target_sheet_properties = _get_properties(target_sheet.parent.ws, target_sheet.handle)
+            target_sheet_properties['result']['qProp']['cells'].append({'name': new_object_id,
+                'type': self.type,
+                'col': col,
+                'row': row,
+                'colspan': colspan,
+                'rowspan': rowspan,
+                'bounds': {'y': bounds_y,
+                'x': bounds_x,
+                'width': bounds_width,
+                'height': bounds_height}})
+            
+            # apply the target sheet properties
+            set_sheet_prop = _set_properties(target_sheet.parent.ws, \
+                                            target_sheet.handle, target_sheet_properties['result']['qProp'])
+            
+            if 'result' in set_sheet_prop:
+                return new_object_id
+            else:
+                return None
         
-        # apply the target sheet properties
-        set_sheet_prop = _set_properties(target_sheet.parent.ws, \
-                                         target_sheet.handle, target_sheet_properties['result']['qProp'])
-        
-        if 'result' in set_sheet_prop:
-            return new_object_id
-        else:
-            return None
+        return new_object_id
 
         
         
