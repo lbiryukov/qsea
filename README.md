@@ -172,7 +172,7 @@ for obj in sh.objects:
         print(ms.definition)
 ```
 
-Objects and whole sheet can be copied to another app:
+Objects and entire sheets can be copied to another app. While it is possible to copy sheets via the Qlik Sense interface, in some cases this can cause problems if the set of the master measures/dimensions in the source and target apps are different. Qsea allows to choose whether to match master measure IDs or names.
 ```python
 source_app = qsea.App(conn, 'Source AppName')
 target_app = qsea.App(conn, 'Target AppName')
@@ -713,6 +713,7 @@ obj.get_layout()
 The class contains collections of measures and dimensions in the object on the sheet:
 * `object.measures`: a collection of ObjectMeasure class objects, representing the measures in the object on the sheet
 * `object.dimensions`: a collection of ObjectDimension class objects, representing the dimensions in the object on the sheet
+* `object.subitems`: a collection of Object class objects, representing the subitems of filterpane and container type objects
 
 You can access the main information in pandas DataFrame via `.df`:
 ```python
@@ -848,11 +849,10 @@ app.save()
 ```
 
 ## Roadmap
-* support for container copy (including filterpane)
-* support for master item tags
-* support for adding dimensions and measures to the object
 * support for master objects in the app
 * support for hierarchical dimensions
+* support for master item tags
+* support for adding dimensions and measures to the object
 
 
 ## License

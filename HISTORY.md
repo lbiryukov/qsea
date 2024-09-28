@@ -1,5 +1,8 @@
 # History
 
+## [0.0.24] - 2024-09-28
+- Object.copy() function now can copy complex objects such as filterpanes and containers.
+
 ## [0.0.23] - 2024-09-15
 - Fixed a bug in the sheet.copy function that sometimes caused objects to be duplicated on the target sheet
 

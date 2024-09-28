@@ -220,6 +220,10 @@ def _open_doc(ws, app_name: str = '', AppID: str = '') -> int:
         res = query_result['result']['qReturn']['qHandle']
         logger.debug('_open_doc function completed, %s', res)
         return res
+    elif 'error' in query_result and 'code' in query_result['error'] and \
+        query_result['error']['code'] == 1002:
+        logger.info('App already open, AppID = %s', AppID)
+        return 0
     else:
         logger.warning('_open_doc function error. OpenDoc method returned incorrect response. app_name = %s, response = %s', app_name, query_result)
         return 0
@@ -822,6 +826,9 @@ def _get_object_dim_pandas(ws, object_handle: int) -> pd.DataFrame:
                 raise ValueError('Query response structure is not as expected \
                                  ([result][qProp][boxplotDef][qHyperCubeDef][qDimensions]).')
             odf = pd.json_normalize(query_result['result']['qProp']['boxplotDef']['qHyperCubeDef']['qDimensions'])
+        elif 'qInfo' in query_result['result']['qProp'] and 'qType' in query_result['result']['qProp']['qInfo'] and \
+              query_result['result']['qProp']['qInfo']['qType']  == 'listbox':
+            odf = pd.json_normalize(query_result['result']['qProp']['qListObjectDef'])
         else:
             if 'qHyperCubeDef' not in query_result['result']['qProp'] or \
                     'qDimensions' not in query_result['result']['qProp']['qHyperCubeDef']:
@@ -830,8 +837,32 @@ def _get_object_dim_pandas(ws, object_handle: int) -> pd.DataFrame:
     logger.debug('_get_object_dim_pandas function completed, len(df): %s', len(odf))
     return odf
 
+def _get_object_subitem_pandas(ws, object_handle: int) -> pd.DataFrame:
+    """
+    Returns a dataframe with all subitems used in object and their properties
 
-# In[44]:
+    Args:
+        ws (websocket): websocket connection
+        object_handle (int): Object handle
+
+    Returns:
+        dataframe: dataframe with all subitems used in object and their properties
+    """
+
+    logger.debug('_get_object_subitem_pandas function started, object_handle = %s', object_handle)
+    query_result = query(ws, {
+      "jsonrpc": "2.0",
+      "id": 4,
+      "method": "GetChildInfos",
+      "handle": object_handle,
+      "params": []
+    })
+
+    if 'result' not in query_result or 'qInfos' not in query_result['result']:
+        raise ValueError('Query response structure is not as expected ([result][qInfos]).')
+    else: odf = pd.json_normalize(query_result['result']['qInfos'])
+    logger.debug('_get_object_subitem_pandas function completed, len(df): %s', len(odf))
+    return odf
 
 class App:
     """
@@ -969,7 +1000,7 @@ class App:
                             if obj.type in ['distributionplot', 'piechart', 'table', 'barchart',
         'pivot-table', 'boxplot', 'histogram', 'gauge', 'bulletchart',
         'mekkochart', 'treemap', 'waterfallchart', 'kpi', 'combochart',
-        'scatterplot']:
+        'scatterplot', 'listbox']:
                                 try: obj.load()
                                 except Exception as E: logger.warning('App.load function, error loading object. Object will be ignored. %s, %s', obj.name, str(E))
                 except Exception as E: logger.warning('App.load function, error loading sheet. Sheet will be ignored. %s, %s', sh.name, str(E))
@@ -1026,12 +1057,13 @@ class AppChildren():
     A child of App class
     """
     def __init__(self, parent, _type):
-        self.children = {}
-        self.count = 0
         self.parent = parent
         self.ws = parent.ws
         self.app_handle = parent.handle
         self._type = _type
+        
+        self.children = {}
+        self.count = 0
         
     def __getitem__(self, childName):
         logger.debug('AppChildren.__getitem__ function started, _type = %s, childName = %s', self._type, childName)
@@ -1612,9 +1644,11 @@ class Variable:
 
     def __init__(self, parent, varName):
         self.name = varName
-        self.handle = 0
-        self.app_handle = 0
+        
         self.parent = parent
+        self.ws = parent.ws
+        self.app_handle = parent.app_handle
+        self.handle = 0
 
         self.id = ''
         self.definition = ''
@@ -1784,9 +1818,11 @@ class Measure:
     """
     def __init__(self, parent, msName):
         self.name = msName
-        self.handle = 0
-        self.app_handle = 0
+
         self.parent = parent
+        self.ws = parent.ws
+        self.app_handle = parent.app_handle
+        self.handle = 0
         
         self.id, self.definition, self.description, self.label, self.label_expression = '', '', '', '', ''
         self.format_type, self.format_ndec, self.format_use_thou, self.format_dec, self.format_thou = '', -1, -1, '', ''
@@ -2052,9 +2088,11 @@ class Dimension:
     """
     def __init__(self, parent, dimName):
         self.name = dimName
-        self.handle = 0
-        self.app_handle = 0
+
         self.parent = parent
+        self.ws = parent.ws
+        self.app_handle = parent.app_handle
+        self.handle = 0
         
         self.id, self.definition, self.label, self.label_expression, self.description = '', '', '', '', ''
         self.created_date, self.modified_date = dt.datetime(year=1901, month=1, day=1), dt.datetime(year=1901, month=1, day=1)
@@ -2259,9 +2297,11 @@ class Sheet:
 
     def __init__(self, parent, sheetName):
         self.name = sheetName
-        self.handle = 0
+        
         self.parent = parent
+        self.ws = parent.ws
         self.app_handle = parent.app_handle
+        self.handle = 0
         
         self.id = ''
         self.description = ''
@@ -2426,13 +2466,14 @@ class SheetChildren():
     The class, representing the collection of the objects on the sheet
     """
     def __init__(self, parent):
+        self.parent = parent
+        self.ws = parent.ws
+        self.app_handle = parent.app_handle
+        self.sheet = parent
+        self.sheet_handle = parent.handle
+
         self.children = {}
         self.count = 0
-        self.sheet_handle = 0
-        self.app_handle = parent.app_handle
-        self.parent = parent
-        self.parentId = parent.id
-        
         
     def __getitem__(self, childName):
         logger.debug('SheetChildren.__getitem__ started, name = %s', childName)
@@ -2507,17 +2548,20 @@ class Object:
     """
     def __init__(self, parent, objName):
         self.name = objName
-        self.handle = 0
+
         self.parent = parent
+        self.ws = parent.ws
         self.app_handle = parent.app_handle
+        self.handle = 0
+        self.sheet = parent.sheet
         self.sheet_handle = parent.sheet_handle
-        self.sheet = parent.parent
         
         self.type = ''
         self.col, self.row, self.colspan, self.rowspan, self.bounds_y, self.bounds_x, self.bounds_width, self.bounds_height = 0, 0, 0, 0, 0, 0, 0, 0
         
         self.dimensions = ObjectChildren(self, 'objectDimensions')
         self.measures = ObjectChildren(self, 'objectMeasures')
+        self.subitems = ObjectChildren(self, 'objectSubItems')
         
     def get_handle(self) -> int:
         """
@@ -2540,15 +2584,18 @@ class Object:
         """
         Loads object dimensions and measures from Qlik Sense
         """
-        logger.debug('Object.load started, sheet = %s, name = %s, id = %s', self.sheet.name, self.name, self.id)
+        logger.debug('Object.load started, sheet = %s, name = %s', self.sheet.name, self.name)
         self.get_handle()
-        if self.dimensions.load():
-            if self.measures.load():
-                logger.debug('Object.load finished, dimensions = %s, measures = %s', \
-                     self.dimensions.count, self.measures.count)
-                return True
-        logger.warning('Object.load failed, sheet = %s, name = %s, id = %s', self.sheet.name, self.name, self.id)
-        return False
+        try:
+            if self.type not in ('filterpane', 'container'): self.dimensions.load()
+            if self.type not in ('filterpane', 'container', 'listbox'): self.measures.load()
+            if self.type in ('filterpane', 'container'): self.subitems.load()
+            logger.debug('Object.load finished, dimensions = %s, measures = %s, subitems = %s', \
+                        self.dimensions.count, self.measures.count, self.subitems.count)
+            return True
+        except Exception as e:
+            logger.warning('Object.load failed, sheet = %s, name = %s, error: %s', self.sheet.name, self.name, e)
+            return False
         
     def export_data(self, file_type: str = 'xlsx') -> None:
         """
@@ -2736,6 +2783,25 @@ class Object:
             return False
         
         new_object_id = create_child_answer['result']['qReturn']['qGenericId']
+        
+        # maintaining complex objects such as filterpanes and containers
+        self.subitems.load()
+        if self.subitems.count > 0:
+            target_sheet.load()
+            target_handle = target_sheet.objects[new_object_id].get_handle()
+            for sub in self.subitems:
+                sub.get_handle()
+                sub_source_properties = _get_properties(self.ws, sub.handle)
+            
+                create_child_answer = query(target_sheet.parent.ws, {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "CreateChild",
+                    "handle": target_handle,
+                    "params": [
+                            sub_source_properties['result']['qProp']
+                    ]
+                    })
 
         if add_cells:
             # add the child object to the target sheet properties; this is needed to make the object visible
@@ -2777,9 +2843,15 @@ class ObjectDimension():
 
     def __init__(self, parent, dimName):
         self.name = dimName
-        self.app_handle = 0
+
         self.parent = parent
+        self.ws = parent.ws
+        self.app_handle = parent.app_handle
+        self.handle = 0
+        self.sheet = parent.sheet
+        self.sheet_handle = parent.sheet_handle
         self.object = parent.parent
+
         self.index = -1
         logger.debug('ObjectDimension class. type: %s', type(self.parent))
         
@@ -2924,9 +2996,15 @@ class ObjectMeasure():
     """
     def __init__(self, parent, msName):
         self.name = msName
-        self.app_handle = 0
+        
         self.parent = parent
+        self.ws = parent.ws
+        self.app_handle = parent.app_handle
+        self.handle = 0
+        self.sheet = parent.sheet
+        self.sheet_handle = parent.sheet_handle
         self.object = parent.parent
+
         self.index = -1
         
         self.id, self.library_id, self.definition, self.label, self.label_expression, \
@@ -3113,13 +3191,17 @@ class ObjectChildren():
     The class, representing different collections of sheet objects, like measures or dimensions
     """
     def __init__(self, parent, _type):
+        self.parent = parent
+        self.ws = parent.ws
+        self.app_handle = parent.app_handle
+        self.handle = 0
+        self.sheet = parent.sheet
+        self.sheet_handle = parent.sheet_handle
+        self.object = parent.parent
+        
         self.children = {}
         self.count = 0
-        self.parent = parent
-        self.app_handle = parent.app_handle
         self._type = _type
-        self.sheet = parent.sheet
-        
     
     def __getitem__(self, childCaller):
         logger.debug('ObjectChildren.__getitem__ started, sheet = %s, childCaller = %s', self.sheet.name, childCaller)
@@ -3175,72 +3257,107 @@ class ObjectChildren():
         if self._type == 'objectDimensions':
             self.parentHandle = self.parent.get_handle()
             if self.parentHandle is None:   # upd 16.08.2024
-                logger.warning('Unable to retrieve handle for object %s', self.parent.name)
+                logger.warning('Unable to retrieve handle for the object %s', self.parent.name)
                 return False
-            self.df = _get_object_dim_pandas(self.parent.parent.parent.parent.ws, self.parentHandle)
-            if len(self.df) == 0:
-                logger.debug('No dimensions found for object %s', self.parent.name)
-                return True
-            # since some cId can be empty, we need to fill them with some values; qsea_id column marks those values
-            mask = self.df['qDef.cId'].isnull()
-            self.df['qDef.cId'] = self.df['qDef.cId'].apply(lambda x: str(uuid.uuid4()) if pd.isnull(x) else x)
-            self.df.loc[mask, 'qsea_id'] = 1
-            self.df['qsea_id'] = self.df['qsea_id'].fillna(0)
+            try:
+                self.df = _get_object_dim_pandas(self.parent.parent.parent.parent.ws, self.parentHandle)
+                if len(self.df) == 0:
+                    logger.debug('No dimensions found for the object %s', self.parent.name)
+                    return True
+                # since some cId can be empty, we need to fill them with some values; qsea_id column marks those values
+                mask = self.df['qDef.cId'].isnull()
+                self.df['qDef.cId'] = self.df['qDef.cId'].apply(lambda x: str(uuid.uuid4()) if pd.isnull(x) else x)
+                self.df.loc[mask, 'qsea_id'] = 1
+                self.df['qsea_id'] = self.df['qsea_id'].fillna(0)
 
-            for dimId in self.df['qDef.cId']:
-                dim = ObjectDimension(self, dimId)
-                dim.app_handle = self.app_handle
-                dim.index = self.count
-                
-                row = self.df[self.df['qDef.cId'] == dimId].iloc[0]
-                dim.id = dimId
-                dim.qsea_id = pick(row, 'qsea_id')
-                dim.library_id = pick(row, 'qLibraryId')
-                dim.definition = pick(row, 'qDef.qFieldDefs')
-                dim.label = pick(row, 'qDef.qFieldLabels')
-                dim.label_expression = pick(row, 'qDef.qLabelExpression')
-                dim.calc_condition = pick(row, 'qCalcCondition.qCond.qv')
+                for dimId in self.df['qDef.cId']:
+                    dim = ObjectDimension(self, dimId)
+                    dim.app_handle = self.app_handle
+                    dim.index = self.count
+                    
+                    row = self.df[self.df['qDef.cId'] == dimId].iloc[0]
+                    dim.id = dimId
+                    dim.qsea_id = pick(row, 'qsea_id')
+                    dim.library_id = pick(row, 'qLibraryId')
+                    dim.definition = pick(row, 'qDef.qFieldDefs')
+                    dim.label = pick(row, 'qDef.qFieldLabels')
+                    dim.label_expression = pick(row, 'qDef.qLabelExpression')
+                    dim.calc_condition = pick(row, 'qCalcCondition.qCond.qv')
 
-                self[dimId] = dim
-                self.count += 1
+                    self[dimId] = dim
+                    self.count += 1
+            except Exception as e:
+                logger.warning('Unable to retrieve dimensions for the object %s: %s', self.parent.name, e)
+                return False
 
         if self._type == 'objectMeasures':
             self.parentHandle = self.parent.get_handle()
             if self.parentHandle is None:
-                logger.warning('Unable to retrieve handle for object %s', self.parent.name)
+                logger.warning('Unable to retrieve handle for the object %s', self.parent.name)
                 return False
             logger.debug('parentHandle: %s', self.parentHandle)
-            self.df = _get_object_ms_pandas(self.parent.parent.parent.parent.ws, self.parentHandle)
-            if len(self.df) == 0:
-                logger.debug('No measures found for object %s', self.parent.name)
-                return True
-            
-            # since some cId can be empty, we need to fill them with some values; qsea_id column marks those values
-            mask = self.df['qDef.cId'].isnull()
-            self.df['qDef.cId'] = self.df['qDef.cId'].apply(lambda x: str(uuid.uuid4()) if pd.isnull(x) else x)
-            self.df.loc[mask, 'qsea_id'] = 1
-            self.df['qsea_id'] = self.df['qsea_id'].fillna(0)
+            try: 
+                self.df = _get_object_ms_pandas(self.parent.parent.parent.parent.ws, self.parentHandle)
+                if len(self.df) == 0:
+                    logger.debug('No measures found for the object %s', self.parent.name)
+                    return True
+                
+                # since some cId can be empty, we need to fill them with some values; qsea_id column marks those values
+                mask = self.df['qDef.cId'].isnull()
+                self.df['qDef.cId'] = self.df['qDef.cId'].apply(lambda x: str(uuid.uuid4()) if pd.isnull(x) else x)
+                self.df.loc[mask, 'qsea_id'] = 1
+                self.df['qsea_id'] = self.df['qsea_id'].fillna(0)
 
-            for msId in self.df['qDef.cId']:
-                ms = ObjectMeasure(self, msId)
-                ms.app_handle = self.app_handle
-                ms.index = self.count
+                for msId in self.df['qDef.cId']:
+                    ms = ObjectMeasure(self, msId)
+                    ms.app_handle = self.app_handle
+                    ms.index = self.count
 
-                row = self.df[self.df['qDef.cId'] == msId].iloc[0]
-                ms.id = msId
-                ms.library_id = pick(row, 'qLibraryId')
-                ms.definition = pick(row, 'qDef.qDef')
-                ms.label = pick(row, 'qDef.qLabel')
-                ms.label_expression = pick(row, 'qDef.qLabelExpression')
-                ms.calc_condition = pick(row, 'qCalcCondition.qCond.qv')
-                ms.format_type = pick(row, 'qDef.qNumFormat.qType')
-                ms.format_ndec = pick(row, 'qDef.qNumFormat.qnDec', int)
-                ms.format_use_thou = pick(row, 'qDef.qNumFormat.qUseThou', int)
-                ms.format_dec = pick(row, 'qDef.qNumFormat.qDec')
-                ms.format_thou = pick(row, 'qDef.qNumFormat.qThou')
+                    row = self.df[self.df['qDef.cId'] == msId].iloc[0]
+                    ms.id = msId
+                    ms.library_id = pick(row, 'qLibraryId')
+                    ms.definition = pick(row, 'qDef.qDef')
+                    ms.label = pick(row, 'qDef.qLabel')
+                    ms.label_expression = pick(row, 'qDef.qLabelExpression')
+                    ms.calc_condition = pick(row, 'qCalcCondition.qCond.qv')
+                    ms.format_type = pick(row, 'qDef.qNumFormat.qType')
+                    ms.format_ndec = pick(row, 'qDef.qNumFormat.qnDec', int)
+                    ms.format_use_thou = pick(row, 'qDef.qNumFormat.qUseThou', int)
+                    ms.format_dec = pick(row, 'qDef.qNumFormat.qDec')
+                    ms.format_thou = pick(row, 'qDef.qNumFormat.qThou')
 
-                self[msId] = ms
-                self.count += 1
+                    self[msId] = ms
+                    self.count += 1
+            except Exception as e:
+                logger.warning('Unable to retrieve measures for the object %s: %s', self.parent.name, e)
+                return False
+
+        if self._type == 'objectSubItems':
+            self.parentHandle = self.parent.get_handle()
+            if self.parentHandle is None:
+                logger.warning('Unable to retrieve handle for the object %s', self.parent.name)
+                return False
+            logger.debug('parentHandle: %s', self.parentHandle)
+            try: 
+                self.df = _get_object_subitem_pandas(self.parent.parent.parent.parent.ws, self.parentHandle)
+                if len(self.df) == 0:
+                    logger.debug('No subitems found for the object %s', self.parent.name)
+                    return True
+                
+                for objId in self.df['qId']:
+                    obj = Object(self, objId)
+                    obj.index = self.count
+
+                    row = self.df[self.df['qId'] == objId].iloc[0]
+                    obj.id = objId
+                    obj.type = pick(row, 'qType')
+
+                    self[objId] = obj
+                    obj.load()
+                    self.count += 1
+            except Exception as e:
+                logger.warning('Unable to retrieve subitems for the object %s: %s', self.parent.name, e)
+                return False
         # else:
         #     logger.warning('ObjectChildren.load function, %s already loaded, recreate the App object to reload', self._type)
         #     return False
@@ -3378,11 +3495,13 @@ class Bookmark:
     """
 
     def __init__(self, parent, bookmarkName):
-        self.parent = parent
         self.name = bookmarkName
-        self.handle = 0
+        
+        self.parent = parent
+        self.ws = parent.ws
         self.app_handle = parent.app_handle
-
+        self.handle = 0
+        
         self.id, self.owner_id, self.owner_user_id, self.owner_name, self.state_data, self.description = '', '', '', '', '', ''
         self.published, self.approved = 0, 0
         self.created_date, self.modified_date, self.publish_time = dt.datetime(year=1901, month=1, day=1), dt.datetime(year=1901, month=1, day=1), dt.datetime(year=1901, month=1, day=1)
