@@ -11,6 +11,7 @@ import qsea
 
 from ._integration_helpers import (
     MAIN_APP_NAME,
+    TARGET_APP_NAME,
     make_unique_name,
     register_sheet_cleanup,
 )
@@ -21,27 +22,35 @@ pytestmark = [pytest.mark.integration]
 
 def test_connection_close_shuts_down_websockets(connection_factory):
     conn = connection_factory()
-    assert conn.main_ws.connected is True
+    app = qsea.App(conn, TARGET_APP_NAME)
+    ws = conn.wss[app.id]
+    assert ws.connected is True
+    assert len(conn.wss) == 1
 
     conn.close()
-    assert conn.main_ws.connected is False
+    assert ws.connected is False
     assert len(conn.wss) == 0
 
 
 def test_connection_context_manager_closes_on_exit(connection_factory):
     with connection_factory() as conn:
-        assert conn.main_ws.connected is True
+        app = qsea.App(conn, TARGET_APP_NAME)
+        ws = conn.wss[app.id]
+        assert ws.connected is True
 
-    assert conn.main_ws.connected is False
+    assert ws.connected is False
+    assert len(conn.wss) == 0
 
 
 def test_connection_close_with_secondary_apps(connection_factory):
     conn = connection_factory()
-    app1 = qsea.App(conn, MAIN_APP_NAME)
-    assert conn.main_ws.connected is True
+    app = qsea.App(conn, TARGET_APP_NAME)
+    ws = conn.wss[app.id]
+    assert ws.connected is True
+    assert len(conn.wss) == 1
 
     conn.close()
-    assert conn.main_ws.connected is False
+    assert ws.connected is False
     assert len(conn.wss) == 0
 
 

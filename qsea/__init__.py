@@ -348,28 +348,36 @@ def _destroy_session_object(ws, app_handle: int, object_id: str) -> bool:
     return True
 
 
-def _open_connection(qlik_url: str, header_user: dict, timeout: int = 10):
+def _open_connection(qlik_url: str, header_user: dict, timeout: int = 10, max_retries: int = 6, retry_delay: float = 10.0):
+    import time as _time
     logger.debug('_open_connection function started, url = %s', qlik_url)
-    ws = websocket.create_connection(qlik_url, sslopt={"cert_reqs": ssl.CERT_NONE}, header=header_user, timeout=timeout)
-    result1 = ws.recv()
-    parsed1 = json.loads(result1)
-    if 'severity' in parsed1.get('params', {}):
-        if parsed1['params']['severity'] == 'fatal':
-            fatal_msg = parsed1['params']['message']
-            logger.error('Failed to open connection: %s', fatal_msg)
-            try:
-                ws.close()
-            except Exception:
-                pass
-            raise ConnectionError(f'Qlik Engine connection failed: {fatal_msg}')
-    else: 
-        result2 = ws.recv()
-        parsed2 = json.loads(result2)
-        if parsed2.get('params', {}).get('qSessionState') in ['SESSION_ATTACHED', 'SESSION_CREATED']:
-            logger.info('Connection opened, %s', parsed2['params']['qSessionState'])
-            return ws
-    logger.debug('_open_connection function completed')
-    return ws
+    for attempt in range(1, max_retries + 1):
+        ws = websocket.create_connection(qlik_url, sslopt={"cert_reqs": ssl.CERT_NONE}, header=header_user, timeout=timeout)
+        result1 = ws.recv()
+        parsed1 = json.loads(result1)
+        if 'severity' in parsed1.get('params', {}):
+            if parsed1['params']['severity'] == 'fatal':
+                fatal_msg = parsed1['params']['message']
+                logger.error('Failed to open connection (attempt %s/%s): %s', attempt, max_retries, fatal_msg)
+                try:
+                    ws.close()
+                except Exception:
+                    pass
+                if 'MaxParallelSessionsExceeded' in fatal_msg and attempt < max_retries:
+                    backoff = retry_delay * min(attempt, 4)
+                    logger.info('Retrying in %.1f seconds (attempt %s/%s)...', backoff, attempt, max_retries)
+                    _time.sleep(backoff)
+                    continue
+                raise ConnectionError(f'Qlik Engine connection failed: {fatal_msg}')
+        else: 
+            result2 = ws.recv()
+            parsed2 = json.loads(result2)
+            if parsed2.get('params', {}).get('qSessionState') in ['SESSION_ATTACHED', 'SESSION_CREATED']:
+                logger.info('Connection opened, %s', parsed2['params']['qSessionState'])
+                return ws
+        logger.debug('_open_connection function completed')
+        return ws
+    raise ConnectionError(f'Qlik Engine connection failed after {max_retries} retries')
 
 class Connection:
     """
@@ -384,12 +392,16 @@ class Connection:
         self.qlik_url = qlik_url
         self.timeout = timeout
         
-        # main connection is used for the first app
-        self.main_ws = _open_connection(qlik_url, header_user, timeout)
+        main_ws = _open_connection(qlik_url, header_user, timeout)
         
         # by default the main_app_id is empty; when the first app is opened, it is assigned to main_app
         self.main_app_id = None
-        self.df = _get_app_list(self.main_ws)
+        self.df = _get_app_list(main_ws)
+
+        try:
+            main_ws.close()
+        except Exception:
+            pass
 
         # wss is a dictionary of secondary connections
         self.wss = {}
@@ -397,16 +409,12 @@ class Connection:
 
     def close(self):
         """
-        Closes the main and all secondary WebSocket connections.
+        Closes all secondary WebSocket connections.
         """
         logger.debug('Connection.close started')
         if self._closed:
             return
         self._closed = True
-        try:
-            self.main_ws.close()
-        except Exception as e:
-            logger.warning('Error closing main WebSocket: %s', e)
         for app_id, ws in self.wss.items():
             try:
                 ws.close()
@@ -432,7 +440,12 @@ class Connection:
         """
         Reloads the list of apps, in case if new apps were added after the Connection object was created
         """
-        self.df = _get_app_list(self.main_ws)
+        tmp_ws = _open_connection(self.qlik_url, self.header_user, self.timeout)
+        self.df = _get_app_list(tmp_ws)
+        try:
+            tmp_ws.close()
+        except Exception:
+            pass
 
 
 
@@ -468,6 +481,8 @@ def query(ws, json_query: dict, attempts: int = 1) -> Union[dict, None]:
                     logger.error('Too many push notifications skipped (%d), aborting query', skipped)
                     return None
                 continue
+            if isinstance(res.get('result'), dict) and 'qReturn' not in res['result'] and 'qValue' in res['result']:
+                res['result']['qReturn'] = res['result']['qValue']
             logger.debug('Query function completed, answer %s', str(res)[:config.logQueryMaxLength])
             return res
         except Exception as E:
@@ -1962,7 +1977,7 @@ class AppChildren():
                             "qMetaDef": {"title": name, "description": description, "tags": []}
                             }]
                     }
-                
+
             # create new dimension
             query_result = query(self.parent.ws, t)
             
@@ -3953,6 +3968,52 @@ class ObjectChildren():
 
             return [t, zu]
             
+class Bookmark:
+    """
+    The class, representing the bookmarks of the application
+    Member of the App.bookmarks collection
+    """
+
+    def __init__(self, parent, bookmarkName):
+        self.name = bookmarkName
+        
+        self.parent = parent
+        self.ws = parent.ws
+        self.app_handle = parent.app_handle
+        self.handle = 0
+        
+        self.id, self.owner_id, self.owner_user_id, self.owner_name, self.state_data, self.description = '', '', '', '', '', ''
+        self.published, self.approved = 0, 0
+        self.created_date, self.modified_date, self.publish_time = dt.datetime(year=1901, month=1, day=1), dt.datetime(year=1901, month=1, day=1), dt.datetime(year=1901, month=1, day=1)
+
+    def get_handle(self) -> int:
+        """
+        Gets the handle of the bookmark
+        """
+        logger.debug('Bookmark.get_handle function started, %s', self.name)
+        result = query(self.parent.ws, {
+          "jsonrpc": "2.0",
+          "id": 4,
+          "method": "GetBookmark",
+          "handle": self.app_handle,
+          "params": [self.id]
+        })
+        if result is None or 'result' not in result:
+            logger.error('Bookmark.get_handle failed for %s', self.name)
+            return None
+        self.handle = result['result']['qReturn']['qHandle']
+        logger.debug('Bookmark.get_handle function completed, %s', self.handle)
+        return self.handle
+        
+    def get_layout(self) -> dict:
+        """
+        Returns the layout of the bookmark
+        """
+        logger.debug('Bookmark.get_layout function started, %s', self.name)
+        self.get_handle()
+        return _get_layout(self.parent.ws, self.handle)
+# %%
+
 class Bookmark:
     """
     The class, representing the bookmarks of the application

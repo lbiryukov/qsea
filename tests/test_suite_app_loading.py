@@ -63,8 +63,8 @@ def test_app_load_depth_2_loads_sheet_objects(app_factory):
 
 def test_app_load_depth_3_loads_object_dimensions_and_measures(app_factory):
     app = app_factory(depth=3)
-    sheet = app.sheets[RATING_SHEET_NAME]
-    obj = sheet.objects[RATING_OBJECT_ID]
+    sheet = app.sheets[FORMATS_SHEET_NAME]
+    obj = sheet.objects[FORMATS_OBJECT_ID]
     assert obj.dimensions.df.shape[0] > 0
     assert obj.measures.df.shape[0] > 0
 

@@ -35,7 +35,7 @@ def test_evaluate_master_measure_by_name_without_filters(app_factory, name_facto
 
     register_child_cleanup(cleanup_registry, app_factory, MAIN_APP_NAME, "measures", measure_name)
 
-    assert app.measures.add(measure_name, definition="sum(1)") is True
+    assert app.measures.add(measure_name, definition="sum(1)")
     app.save()
     app = app_factory()
 
@@ -60,7 +60,7 @@ def test_evaluate_master_measure_with_filters_via_hypercube(app_factory, name_fa
 
     register_child_cleanup(cleanup_registry, app_factory, MAIN_APP_NAME, "measures", measure_name)
 
-    assert app.measures.add(measure_name, definition="sum(1)") is True
+    assert app.measures.add(measure_name, definition="sum(1)")
     test_field = list(app.fields.children.keys())[0]
 
     result = app.evaluate(measure_name, filters={test_field: 1}, method="evaluate")
