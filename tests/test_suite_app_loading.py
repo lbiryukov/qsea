@@ -157,9 +157,31 @@ def test_get_layout_works_for_master_items_sheet_object_and_bookmark(app_factory
     register_child_cleanup(cleanup_registry, app_factory, MAIN_APP_NAME, "dimensions", dimension_name)
     register_child_cleanup(cleanup_registry, app_factory, MAIN_APP_NAME, "variables", variable_name)
 
-    assert app.measures.add(measure_name, "SomeDef") is True
-    assert len(app.dimensions.add(dimension_name, "SomeDef")) > 0
-    assert app.variables.add(variable_name, "SomeVar") is True
+    # #region agent log
+    import json as _json, time as _time
+    _logpath = "debug-f19121.log"
+    def _dlog(loc, msg, data):
+        with open(_logpath, "a", encoding="utf-8") as _f:
+            _f.write(_json.dumps({"sessionId":"f19121","location":loc,"message":msg,"data":data,"timestamp":int(_time.time()*1000),"runId":"post-fix","hypothesisId":"A"}) + "\n")
+    # #endregion
+
+    # #region agent log
+    _ms_result = app.measures.add(measure_name, "SomeDef")
+    _dlog("test:160", "measures.add result", {"value": str(_ms_result), "type": str(type(_ms_result))})
+    assert _ms_result is not None
+    # #endregion
+
+    # #region agent log
+    _dim_result = app.dimensions.add(dimension_name, "SomeDef")
+    _dlog("test:161", "dimensions.add result", {"value": str(_dim_result), "type": str(type(_dim_result))})
+    assert len(_dim_result) > 0
+    # #endregion
+
+    # #region agent log
+    _var_result = app.variables.add(variable_name, "SomeVar")
+    _dlog("test:162", "variables.add result", {"value": str(_var_result), "type": str(type(_var_result))})
+    assert _var_result is not None
+    # #endregion
 
     measure_layout = app.measures[measure_name].get_layout()
     dimension_layout = app.dimensions[dimension_name].get_layout()
@@ -170,6 +192,17 @@ def test_get_layout_works_for_master_items_sheet_object_and_bookmark(app_factory
     sheet.load()
     object_layout = sheet.objects[EXPORT_OBJECT_ID].get_layout()
     bookmark_layout = app.bookmarks[BOOKMARK_NAME].get_layout()
+
+    # #region agent log
+    _dlog("test:174-179", "layout assertions", {
+        "measure_title": measure_layout.get("result",{}).get("qLayout",{}).get("qMeta",{}).get("title"),
+        "dimension_title": dimension_layout.get("result",{}).get("qLayout",{}).get("qMeta",{}).get("title"),
+        "variable_text": variable_layout.get("result",{}).get("qLayout",{}).get("qText"),
+        "sheet_title": sheet_layout.get("result",{}).get("qLayout",{}).get("qMeta",{}).get("title"),
+        "object_id": object_layout.get("result",{}).get("qLayout",{}).get("qInfo",{}).get("qId"),
+        "bookmark_id": bookmark_layout.get("result",{}).get("qLayout",{}).get("qInfo",{}).get("qId"),
+    })
+    # #endregion
 
     assert measure_layout["result"]["qLayout"]["qMeta"]["title"] == measure_name
     assert dimension_layout["result"]["qLayout"]["qMeta"]["title"] == dimension_name

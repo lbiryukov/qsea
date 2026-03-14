@@ -12,26 +12,40 @@ import logging
 import websocket
 import ssl
 import uuid
+from pathlib import Path
 from typing import List, Dict, Tuple, Optional, Union
 
 
 
-def setup_logging(log_file_path, log_level=logging.INFO, log_format=None):
-    if log_format is None:
-        log_format = '%(asctime)s \t LineNo: %(lineno)s \t %(funcName)20s() \t %(levelname)s: %(message)s'
+def setup_logging(log_file_path=None, log_level=logging.INFO, log_format=None):
+    """Configure logging for the qsea library.
 
-    logging.basicConfig(
-        level=log_level,
-        filename=log_file_path,
-        filemode="w",
-        format=log_format
-    )
+    Without arguments, adds a StreamHandler (stderr).
+    With *log_file_path*, adds a FileHandler (append mode) and auto-creates
+    parent directories when they don't exist.
+    """
+    if log_format is None:
+        log_format = '%(asctime)s\t%(name)s\t%(funcName)s()\t%(levelname)s: %(message)s'
+
+    formatter = logging.Formatter(log_format)
+    qsea_logger = logging.getLogger("qsea")
+    qsea_logger.setLevel(log_level)
+
+    if log_file_path:
+        Path(log_file_path).parent.mkdir(parents=True, exist_ok=True)
+        handler = logging.FileHandler(log_file_path, mode="a", encoding="utf-8")
+    else:
+        handler = logging.StreamHandler()
+
+    handler.setFormatter(formatter)
+    qsea_logger.addHandler(handler)
 
 class Config:
     def __init__(self) -> None:
         self.logQueryMaxLength = 300
 
 logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 config = Config()
 
 def _test():
@@ -336,9 +350,6 @@ def _destroy_session_object(ws, app_handle: int, object_id: str) -> bool:
 
 def _open_connection(qlik_url: str, header_user: dict, timeout: int = 10):
     logger.debug('_open_connection function started, url = %s', qlik_url)
-    # #region agent log
-    import time as _time; _dl = open('debug-31c844.log', 'a', encoding='utf-8'); _dl.write(json.dumps({"sessionId":"31c844","location":"__init__.py:_open_connection","message":"open_connection_called","data":{"url":qlik_url,"timeout":timeout},"timestamp":int(_time.time()*1000),"hypothesisId":"C","runId":"post-fix"}) + '\n'); _dl.close()
-    # #endregion
     ws = websocket.create_connection(qlik_url, sslopt={"cert_reqs": ssl.CERT_NONE}, header=header_user, timeout=timeout)
     result1 = ws.recv()
     parsed1 = json.loads(result1)
@@ -346,9 +357,6 @@ def _open_connection(qlik_url: str, header_user: dict, timeout: int = 10):
         if parsed1['params']['severity'] == 'fatal':
             fatal_msg = parsed1['params']['message']
             logger.error('Failed to open connection: %s', fatal_msg)
-            # #region agent log
-            _dl = open('debug-31c844.log', 'a', encoding='utf-8'); _dl.write(json.dumps({"sessionId":"31c844","location":"__init__.py:_open_connection","message":"FATAL_CLOSING_WS","data":{"fatal_message":fatal_msg},"timestamp":int(_time.time()*1000),"hypothesisId":"A","runId":"post-fix"}) + '\n'); _dl.close()
-            # #endregion
             try:
                 ws.close()
             except Exception:
@@ -385,12 +393,16 @@ class Connection:
 
         # wss is a dictionary of secondary connections
         self.wss = {}
+        self._closed = False
 
     def close(self):
         """
         Closes the main and all secondary WebSocket connections.
         """
         logger.debug('Connection.close started')
+        if self._closed:
+            return
+        self._closed = True
         try:
             self.main_ws.close()
         except Exception as e:
@@ -532,7 +544,7 @@ def _open_doc(ws, app_name: str = '', AppID: str = '') -> int:
         logger.error('_open_doc function error. app_name or AppID not specified')
         return 0
     
-    if app_name != '':
+    if AppID == '' and app_name != '':
         AppID = _get_app_id(ws, app_name)
 
     query_result = query(ws, {
@@ -552,9 +564,20 @@ def _open_doc(ws, app_name: str = '', AppID: str = '') -> int:
         res = query_result['result']['qReturn']['qHandle']
         logger.debug('_open_doc function completed, %s', res)
         return res
-    elif 'error' in query_result and 'code' in query_result['error'] and \
-        query_result['error']['code'] == 1002:
-        logger.info('App already open, AppID = %s', AppID)
+    elif 'error' in query_result and 'code' in query_result['error']:
+        error_code = query_result['error']['code']
+        error_msg = query_result['error'].get('message', '')
+        if error_code == 1002:
+            logger.info('App already open, AppID = %s, retrieving handle via GetActiveDoc', AppID)
+            active_result = query(ws, {"handle": -1, "method": "GetActiveDoc", "params": [], "outKey": -1, "id": 1})
+            if active_result and 'result' in active_result and 'qReturn' in active_result['result'] \
+                    and 'qHandle' in active_result['result']['qReturn']:
+                res = active_result['result']['qReturn']['qHandle']
+                logger.debug('_open_doc retrieved handle via GetActiveDoc, handle = %s', res)
+                return res
+            logger.warning('_open_doc: GetActiveDoc fallback failed for AppID = %s', AppID)
+        else:
+            logger.warning('_open_doc error: code=%s, message=%s, app_name=%s', error_code, error_msg, app_name)
         return 0
     else:
         logger.warning('_open_doc function error. OpenDoc method returned incorrect response. app_name = %s, response = %s', app_name, query_result)
@@ -1230,48 +1253,21 @@ class App:
         
         self.id = conn.df[conn.df['qDocName'] == self.name]['qDocId'].values[0]
 
-        # check if conn is already used; if not, add App as the main app
-        # this block allows us to use several apps in one connection object without bothering with different URLs
         if conn.main_app_id is None:
-            self.ws = conn.main_ws
             conn.main_app_id = self.id
-            logger.debug('App %s is set as the main app', self.name)
-        
-        # if current App is the main app, use existing main connection
-        elif conn.main_app_id == self.id:
-            self.ws = conn.main_ws
-            logger.debug('App %s is already set as the main app', self.name)
-        else:
-            # if app_id is already in the list of secondary apps, use existing connection
-            if self.id in conn.wss.keys():
-                self.ws = conn.wss[self.id]
-                logger.debug('App %s is already set as a secondary app', self.name)
-            # else add app_id to the list of secondary apps and open new secondary connection
-            else:
-                conn.wss[self.id] = _open_connection(conn.qlik_url + self.id, conn.header_user, conn.timeout)
-                self.ws = conn.wss[self.id]
-                logger.debug('App %s is added as a secondary app', self.name)
 
-        self.handle = _open_doc(self.ws, app_name)
+        if self.id in conn.wss:
+            self.ws = conn.wss[self.id]
+            logger.debug('App %s reusing existing connection', self.name)
+        else:
+            conn.wss[self.id] = _open_connection(conn.qlik_url + self.id, conn.header_user, conn.timeout)
+            self.ws = conn.wss[self.id]
+            logger.debug('App %s opened new connection', self.name)
+
+        self.handle = _open_doc(self.ws, AppID=self.id)
         if self.handle == 0:
-            # if the conn objected is recreated, but Qlik Sense Engine still keeps it open, it is possible 
-            # that the different app is already opened from the Qlik Sense Engine prospective
-            # so we still need to add an app as a secondary app
-            logger.debug('App %s is not opened, trying to add it as a secondary app', self.name)
-            # if app_id is already in the list of secondary apps, use existing connection
-            if self.id in conn.wss.keys():
-                self.ws = conn.wss[self.id]
-                logger.debug('App %s is already set as a secondary app', self.name)
-            # else add app_id to the list of secondary apps and open new secondary connection
-            else:
-                conn.wss[self.id] = _open_connection(conn.qlik_url + self.id, conn.header_user, conn.timeout)
-                self.ws = conn.wss[self.id]
-                logger.debug('App %s is added as a secondary app', self.name)
-                
-            self.handle = _open_doc(self.ws, app_name)
-            if self.handle == 0:
-                    logger.error('App %s is not opened', self.name)
-                    raise ValueError('App ' + self.name + ' is not opened.')
+            logger.error('App %s could not be opened', self.name)
+            raise ValueError('App ' + self.name + ' could not be opened.')
             
         self.variables = AppChildren(self, 'variables')
         self.measures = AppChildren(self, 'measures')

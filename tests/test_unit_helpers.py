@@ -97,6 +97,13 @@ class TestConfig:
         assert isinstance(qsea.config, qsea.Config)
 
 
+class TestNullHandler:
+    def test_library_logger_has_null_handler(self):
+        lib_logger = logging.getLogger("qsea")
+        handler_types = [type(h) for h in lib_logger.handlers]
+        assert logging.NullHandler in handler_types
+
+
 class TestSetupLogging:
     def test_default_log_level_is_info_constant(self):
         import inspect
@@ -104,6 +111,49 @@ class TestSetupLogging:
         default = sig.parameters['log_level'].default
         assert default == logging.INFO
         assert isinstance(default, int)
+
+    def test_log_file_path_is_optional(self):
+        import inspect
+        sig = inspect.signature(qsea.setup_logging)
+        default = sig.parameters['log_file_path'].default
+        assert default is None
+
+    def test_stream_handler_when_no_path(self):
+        lib_logger = logging.getLogger("qsea")
+        before = len(lib_logger.handlers)
+        qsea.setup_logging()
+        try:
+            new_handlers = lib_logger.handlers[before:]
+            assert any(isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler) for h in new_handlers)
+        finally:
+            for h in new_handlers:
+                lib_logger.removeHandler(h)
+
+    def test_file_handler_creates_parent_dirs(self, tmp_path):
+        log_path = tmp_path / "sub" / "dir" / "test.log"
+        lib_logger = logging.getLogger("qsea")
+        before = len(lib_logger.handlers)
+        qsea.setup_logging(str(log_path))
+        try:
+            assert log_path.parent.exists()
+            new_handlers = lib_logger.handlers[before:]
+            assert any(isinstance(h, logging.FileHandler) for h in new_handlers)
+        finally:
+            for h in new_handlers:
+                h.close()
+                lib_logger.removeHandler(h)
+
+    def test_does_not_affect_root_logger(self):
+        root = logging.getLogger()
+        root_handlers_before = list(root.handlers)
+        lib_logger = logging.getLogger("qsea")
+        before = len(lib_logger.handlers)
+        qsea.setup_logging()
+        try:
+            assert root.handlers == root_handlers_before
+        finally:
+            for h in lib_logger.handlers[before:]:
+                lib_logger.removeHandler(h)
 
 
 class TestTestFunction:

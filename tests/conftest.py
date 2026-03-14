@@ -44,7 +44,9 @@ def connection_config():
 @pytest.fixture(scope="session")
 def connection(connection_config):
     qsea.config.logQueryMaxLength = 10000
-    return qsea.Connection(connection_config, QLIK_URL, timeout=60)
+    conn = qsea.Connection(connection_config, QLIK_URL, timeout=60)
+    yield conn
+    conn.close()
 
 
 @pytest.fixture(scope="session")

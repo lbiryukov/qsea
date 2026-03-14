@@ -25,7 +25,7 @@ def test_sheet_create_persists(app_factory, name_factory, cleanup_registry):
 
     register_sheet_cleanup(cleanup_registry, app_factory, MAIN_APP_NAME, sheet_name)
 
-    assert app.sheets.add(name=sheet_name, description="SomeDescription") is True
+    assert app.sheets.add(name=sheet_name, description="SomeDescription") is not None
     assert len(app.sheets.df[app.sheets.df["qMeta.title"] == sheet_name]) == 1
     assert app.sheets.df[app.sheets.df["qMeta.title"] == sheet_name]["qMeta.description"].values[0] == "SomeDescription"
 

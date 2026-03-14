@@ -29,6 +29,31 @@ Public installation remains `pip install qsea`.
 
 Maintainer and publish workflow is documented separately in `docs/publish_workflow.md`. Release artifacts are built via `uv build`.
 
+## Logging
+
+QSEA uses Python's standard `logging` module. By default, all log output is suppressed (a `NullHandler` is attached to the library logger).
+
+To enable logging to a file:
+
+```python
+qsea.setup_logging("logs/qsea.log")
+```
+
+Parent directories are created automatically if they don't exist. The file is opened in append mode.
+
+To enable logging to console (stderr):
+
+```python
+qsea.setup_logging()
+```
+
+To set debug level:
+
+```python
+import logging
+qsea.setup_logging(log_level=logging.DEBUG)
+```
+
 ## Table of Contents
 - [Getting started](#getting-started)
 - [Full Guide](#full-guide)
