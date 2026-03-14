@@ -1,5 +1,5 @@
 # Virtual environment
-qsea_env/
+.venv/
 
 # Python byte-compiled / optimized / DLL files
 __pycache__/
@@ -23,3 +23,10 @@ dist/
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# Test caches
+.pytest_cache/
+.coverage
+
+# Logs
+logs/

@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qsea"
+version = "1.0.0"
+description = "Convenient way to work with Qlik Sense Engine API from Python"
+dynamic = ["readme"]
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE.txt"]
+authors = [
+  { name = "Lev Biriukov", email = "lbiryukov@gmail.com" },
+]
+keywords = ["QlikSense", "Qlik"]
+dependencies = [
+  "pandas",
+  "websocket-client",
+]
+
+[project.urls]
+Homepage = "https://github.com/ncthuc/qsea"
+Download = "https://pypi.org/project/qsea/"
+
+[dependency-groups]
+dev = [
+  "build>=1.2",
+  "pytest>=7.4",
+  "setuptools>=77",
+  "twine>=6.0",
+  "wheel>=0.45",
+]
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.dynamic]
+readme = { file = ["README.md", "HISTORY.md"], content-type = "text/markdown" }
+
+[tool.setuptools.packages.find]
+include = ["qsea*"]
+exclude = ["tests*"]
+
+[tool.pytest.ini_options]
+minversion = "7.4"
+testpaths = ["tests"]
+python_files = ["test_suite_*.py", "test_packaging_config.py", "test_unit_*.py"]
+addopts = "-ra -m \"not experimental and not slow\""
+norecursedirs = [".venv", "build", "dist"]
+markers = [
+  "integration: requires live Qlik Sense access",
+  "slow: uses multiple remote app loads or copy operations",
+  "experimental: exploratory scenarios kept outside the default stable suite",
+]

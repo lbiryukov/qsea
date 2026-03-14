@@ -1,3 +1,6 @@
-global-exclude *test*.*
-
-recursive-include my_package *
+include README.md
+include HISTORY.md
+include LICENSE.txt
+include pyproject.toml
+graft tests
+global-exclude __pycache__ *.py[cod]

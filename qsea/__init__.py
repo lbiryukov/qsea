@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
 
 
 # beta for publish
@@ -15,10 +14,9 @@ import ssl
 import uuid
 from typing import List, Dict, Tuple, Optional, Union
 
-# In[2]:
 
 
-def setup_logging(log_file_path, log_level=logging.info, log_format=None):
+def setup_logging(log_file_path, log_level=logging.INFO, log_format=None):
     if log_format is None:
         log_format = '%(asctime)s \t LineNo: %(lineno)s \t %(funcName)20s() \t %(levelname)s: %(message)s'
 
@@ -44,9 +42,8 @@ def _test():
 
 
 def _to_qlik(string):
-    # add quotes to string - is used to put strings into json queries
     if string is None: return ""
-    else: return '"' + str(string) + '"'
+    else: return json.dumps(str(string))
 
 def _find_key(key, dictionary):
     # is used to check if there is instance in the json result of Query function
@@ -58,19 +55,310 @@ def _find_key(key, dictionary):
                 return True
     return False
 
+def _build_set_modifier(filters: dict) -> str:
+    """
+    Builds a Qlik Set Analysis modifier string from a dict of filters.
+
+    Args:
+        filters (dict): field names -> values.
+            Values can be int, float, str, or list of these types.
+
+    Returns:
+        str: Set Analysis modifier, e.g. '{<[Year]={2025},[City]={\"Moscow\"}>}'
+    """
+    if not filters:
+        return ''
+
+    parts = []
+    for field, values in filters.items():
+        if not isinstance(values, list):
+            values = [values]
+        formatted = []
+        for v in values:
+            if isinstance(v, str):
+                formatted.append(f"'{v.replace(chr(39), chr(39)+chr(39))}'")
+            else:
+                formatted.append(str(v))
+        parts.append(f'[{field}]={{{",".join(formatted)}}}')
+
+    return '{<' + ','.join(parts) + '>}'
+
+
+def _evaluate_expression(ws, app_handle: int, expression: str) -> dict:
+    """
+    Evaluates a Qlik expression via EvaluateEx Engine API method.
+
+    Args:
+        ws: websocket connection
+        app_handle (int): handle of the open app
+        expression (str): Qlik expression to evaluate
+
+    Returns:
+        dict: {"value": float or None, "text": str, "is_numeric": bool}
+    """
+    logger.debug('_evaluate_expression started, expression = %s', expression)
+
+    expr = expression if expression.startswith('=') else '=' + expression
+    result = query(ws, {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "EvaluateEx",
+        "handle": app_handle,
+        "params": {"qExpression": expr}
+    })
+
+    if result is None:
+        raise ValueError('EvaluateEx returned no response.')
+    if 'error' in result:
+        raise ValueError(f"EvaluateEx error: {result['error']}")
+
+    q_return = result.get('result', {}).get('qReturn', {})
+    if isinstance(q_return, dict):
+        return {
+            "value": q_return.get('qNumber'),
+            "text": q_return.get('qText', ''),
+            "is_numeric": q_return.get('qIsNumeric', False)
+        }
+    return {"value": None, "text": str(q_return), "is_numeric": False}
+
+
+def _clear_all(ws, app_handle: int) -> bool:
+    """
+    Clears all selections in the app via ClearAll Engine API method.
+
+    Args:
+        ws: websocket connection
+        app_handle (int): handle of the open app
+
+    Returns:
+        bool: True if successful
+    """
+    logger.debug('_clear_all started, app_handle = %s', app_handle)
+    result = query(ws, {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "ClearAll",
+        "handle": app_handle,
+        "params": [False]
+    })
+    if result is None:
+        logger.error('_clear_all failed, no response')
+        return False
+    if 'error' in result:
+        logger.error('_clear_all error: %s', result['error'])
+        return False
+    logger.debug('_clear_all completed')
+    return True
+
+
+def _get_field_handle(ws, app_handle: int, field_name: str) -> int:
+    """
+    Gets a field handle via GetField Engine API method.
+
+    Args:
+        ws: websocket connection
+        app_handle (int): handle of the open app
+        field_name (str): name of the field
+
+    Returns:
+        int: field handle
+
+    Raises:
+        ValueError: if the field is not found
+    """
+    logger.debug('_get_field_handle started, field_name = %s', field_name)
+    result = query(ws, {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "GetField",
+        "handle": app_handle,
+        "params": [field_name]
+    })
+    if result is None:
+        raise ValueError(f"Field '{field_name}' not found: no response from engine.")
+    if 'error' in result:
+        raise ValueError(f"Field '{field_name}' not found in the app data model.")
+
+    handle = result.get('result', {}).get('qReturn', {}).get('qHandle')
+    if handle is None:
+        raise ValueError(f"Field '{field_name}': unexpected response format.")
+    logger.debug('_get_field_handle completed, handle = %s', handle)
+    return handle
+
+
+def _select_field_values(ws, field_handle: int, values: list, toggle: bool = False) -> bool:
+    """
+    Selects values in a field via SelectValues Engine API method.
+
+    Args:
+        ws: websocket connection
+        field_handle (int): handle of the field (from _get_field_handle)
+        values (list): values to select
+        toggle (bool): if True, toggle selection mode
+
+    Returns:
+        bool: True if successful
+    """
+    logger.debug('_select_field_values started, field_handle = %s, values = %s', field_handle, values)
+
+    qfield_values = []
+    for v in values:
+        if isinstance(v, (int, float)):
+            qfield_values.append({"qText": str(v), "qIsNumeric": True, "qNumber": float(v)})
+        else:
+            qfield_values.append({"qText": str(v), "qIsNumeric": False, "qNumber": 0})
+
+    result = query(ws, {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "SelectValues",
+        "handle": field_handle,
+        "params": [qfield_values, toggle, False]
+    })
+    if result is None:
+        logger.warning('_select_field_values: no response')
+        return False
+    if 'error' in result:
+        logger.warning('_select_field_values error: %s', result['error'])
+        return False
+    logger.debug('_select_field_values completed')
+    return True
+
+
+def _create_session_hypercube(ws, app_handle: int, expression: str = None,
+                              library_id: str = None,
+                              context_set_expression: str = None) -> dict:
+    """
+    Creates a temporary session hypercube with one measure, evaluates it,
+    and returns the result.
+
+    Args:
+        ws: websocket connection
+        app_handle (int): handle of the open app
+        expression (str): raw Qlik expression (mutually exclusive with library_id)
+        library_id (str): ID of a master measure (mutually exclusive with expression)
+        context_set_expression (str): Set Analysis applied to the whole cube
+
+    Returns:
+        dict: {"handle": int, "id": str, "value": float|None, "text": str, "is_numeric": bool}
+    """
+    logger.debug('_create_session_hypercube started, expression=%s, library_id=%s, context_set=%s',
+                 expression, library_id, context_set_expression)
+
+    object_id = 'eval_' + str(uuid.uuid4())[:8]
+
+    measure_def = {}
+    if library_id:
+        measure_def = {"qLibraryId": library_id}
+    elif expression:
+        expr = expression if expression.startswith('=') else '=' + expression
+        measure_def = {"qDef": {"qDef": expr}}
+    else:
+        raise ValueError('Either expression or library_id must be provided.')
+
+    hc_def = {
+        "qDimensions": [],
+        "qMeasures": [measure_def],
+        "qInitialDataFetch": [{"qTop": 0, "qLeft": 0, "qHeight": 1, "qWidth": 1}]
+    }
+    if context_set_expression:
+        hc_def["qContextSetExpression"] = context_set_expression
+
+    result = query(ws, {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "CreateSessionObject",
+        "handle": app_handle,
+        "params": [{
+            "qInfo": {"qId": object_id, "qType": "eval-hc"},
+            "qHyperCubeDef": hc_def
+        }]
+    })
+
+    if result is None:
+        raise ValueError('CreateSessionObject returned no response.')
+    if 'error' in result:
+        raise ValueError(f"CreateSessionObject error: {result['error']}")
+
+    obj_handle = result['result']['qReturn']['qHandle']
+
+    layout = _get_layout(ws, obj_handle)
+    if layout is None:
+        raise ValueError('GetLayout returned no response for session hypercube.')
+
+    try:
+        cell = layout['result']['qLayout']['qHyperCube']['qDataPages'][0]['qMatrix'][0][0]
+        value = cell.get('qNum')
+        text = cell.get('qText', '')
+        is_numeric = cell.get('qIsNumeric', value is not None and text != '-')
+    except (KeyError, IndexError) as e:
+        raise ValueError(f'Unexpected hypercube layout structure: {e}')
+
+    logger.debug('_create_session_hypercube completed, value=%s, text=%s', value, text)
+    return {
+        "handle": obj_handle,
+        "id": object_id,
+        "value": value,
+        "text": text,
+        "is_numeric": is_numeric
+    }
+
+
+def _destroy_session_object(ws, app_handle: int, object_id: str) -> bool:
+    """
+    Destroys a session object via DestroySessionObject Engine API method.
+
+    Args:
+        ws: websocket connection
+        app_handle (int): handle of the open app
+        object_id (str): qId of the session object to destroy
+
+    Returns:
+        bool: True if successful
+    """
+    logger.debug('_destroy_session_object started, object_id = %s', object_id)
+    result = query(ws, {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "DestroySessionObject",
+        "handle": app_handle,
+        "params": [object_id]
+    })
+    if result is None:
+        logger.warning('_destroy_session_object: no response')
+        return False
+    if 'error' in result:
+        logger.warning('_destroy_session_object error: %s', result['error'])
+        return False
+    logger.debug('_destroy_session_object completed')
+    return True
+
+
 def _open_connection(qlik_url: str, header_user: dict, timeout: int = 10):
-    #to refine: review the overall config
-    logger.debug('_open_connection function started')
-    ws = websocket.create_connection(qlik_url, sslopt={"cert_reqs": ssl.CERT_NONE},header=header_user, timeout = timeout)
+    logger.debug('_open_connection function started, url = %s', qlik_url)
+    # #region agent log
+    import time as _time; _dl = open('debug-31c844.log', 'a', encoding='utf-8'); _dl.write(json.dumps({"sessionId":"31c844","location":"__init__.py:_open_connection","message":"open_connection_called","data":{"url":qlik_url,"timeout":timeout},"timestamp":int(_time.time()*1000),"hypothesisId":"C","runId":"post-fix"}) + '\n'); _dl.close()
+    # #endregion
+    ws = websocket.create_connection(qlik_url, sslopt={"cert_reqs": ssl.CERT_NONE}, header=header_user, timeout=timeout)
     result1 = ws.recv()
-    if 'severity' in json.loads(result1)['params']:
-        if json.loads(result1)['params']['severity'] == 'fatal':
-            logger.error('Failed to open connection, %s', json.loads(result1)['params']['message'])
-            return ws
+    parsed1 = json.loads(result1)
+    if 'severity' in parsed1.get('params', {}):
+        if parsed1['params']['severity'] == 'fatal':
+            fatal_msg = parsed1['params']['message']
+            logger.error('Failed to open connection: %s', fatal_msg)
+            # #region agent log
+            _dl = open('debug-31c844.log', 'a', encoding='utf-8'); _dl.write(json.dumps({"sessionId":"31c844","location":"__init__.py:_open_connection","message":"FATAL_CLOSING_WS","data":{"fatal_message":fatal_msg},"timestamp":int(_time.time()*1000),"hypothesisId":"A","runId":"post-fix"}) + '\n'); _dl.close()
+            # #endregion
+            try:
+                ws.close()
+            except Exception:
+                pass
+            raise ConnectionError(f'Qlik Engine connection failed: {fatal_msg}')
     else: 
         result2 = ws.recv()
-        if json.loads(result2)['params']['qSessionState'] in ['SESSION_ATTACHED', 'SESSION_CREATED']:
-            logger.info ('Connection opened, %s', json.loads(result2)['params']['qSessionState'])
+        parsed2 = json.loads(result2)
+        if parsed2.get('params', {}).get('qSessionState') in ['SESSION_ATTACHED', 'SESSION_CREATED']:
+            logger.info('Connection opened, %s', parsed2['params']['qSessionState'])
             return ws
     logger.debug('_open_connection function completed')
     return ws
@@ -98,6 +386,36 @@ class Connection:
         # wss is a dictionary of secondary connections
         self.wss = {}
 
+    def close(self):
+        """
+        Closes the main and all secondary WebSocket connections.
+        """
+        logger.debug('Connection.close started')
+        try:
+            self.main_ws.close()
+        except Exception as e:
+            logger.warning('Error closing main WebSocket: %s', e)
+        for app_id, ws in self.wss.items():
+            try:
+                ws.close()
+            except Exception as e:
+                logger.warning('Error closing secondary WebSocket for app %s: %s', app_id, e)
+        self.wss.clear()
+        logger.info('Connection closed')
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
+
     def reload_app_list(self):
         """
         Reloads the list of apps, in case if new apps were added after the Connection object was created
@@ -105,7 +423,6 @@ class Connection:
         self.df = _get_app_list(self.main_ws)
 
 
-# In[3]:
 
 def query(ws, json_query: dict, attempts: int = 1) -> Union[dict, None]:
     """
@@ -124,12 +441,21 @@ def query(ws, json_query: dict, attempts: int = 1) -> Union[dict, None]:
     logger.debug('Query function started, query: %s', str(json_query))
     ws.send(json.dumps(json_query))
     i = 1
+    skipped = 0
+    max_skipped = 50
 
     ErrorText = ''
     while i <= attempts:
         try: 
             result = ws.recv()
             res = json.loads(result)
+            if 'id' not in res:
+                skipped += 1
+                logger.debug('Skipping push notification (%d/%d): %s', skipped, max_skipped, str(res)[:config.logQueryMaxLength])
+                if skipped >= max_skipped:
+                    logger.error('Too many push notifications skipped (%d), aborting query', skipped)
+                    return None
+                continue
             logger.debug('Query function completed, answer %s', str(res)[:config.logQueryMaxLength])
             return res
         except Exception as E:
@@ -148,7 +474,6 @@ def query(ws, json_query: dict, attempts: int = 1) -> Union[dict, None]:
 #         })
 
 
-# In[4]:
 
 def _get_app_id(ws, app_name: str) -> Optional[str]:
     """
@@ -171,6 +496,10 @@ def _get_app_id(ws, app_name: str) -> Optional[str]:
         "id": 1
         })
     
+    if rawAppList is None or 'result' not in rawAppList or 'qDocList' not in rawAppList['result']:
+        logger.error('_get_app_id function error. GetDocList returned unexpected response: %s', rawAppList)
+        return None
+
     for app in rawAppList['result']['qDocList']:
         if app['qDocName'] == app_name:
             logger.debug('_get_app_id function completed, %s' , app['qDocId'])
@@ -182,7 +511,6 @@ def _get_app_id(ws, app_name: str) -> Optional[str]:
 # _get_app_id('Myapp_name')
 
 
-# In[5]:
 
 
 def _open_doc(ws, app_name: str = '', AppID: str = '') -> int:
@@ -215,6 +543,10 @@ def _open_doc(ws, app_name: str = '', AppID: str = '') -> int:
     "id": 1
     })
 
+    if query_result is None:
+        logger.error('_open_doc function error. OpenDoc returned no response. app_name = %s', app_name)
+        return 0
+
     if 'result' in query_result and 'qReturn' in query_result['result'] and \
         'qHandle' in query_result['result']['qReturn']:
         res = query_result['result']['qReturn']['qHandle']
@@ -231,7 +563,6 @@ def _open_doc(ws, app_name: str = '', AppID: str = '') -> int:
 # app_handle = _open_doc('Myapp_name')
 
 
-# In[6]:
 
 def _get_properties(ws, handle: int) -> dict:
     """
@@ -254,7 +585,6 @@ def _get_properties(ws, handle: int) -> dict:
     })
 
 
-# In[7]:
 
 def _set_properties(ws, handle: int, params: dict) -> dict:
     """
@@ -281,7 +611,6 @@ def _set_properties(ws, handle: int, params: dict) -> dict:
     return zu
 
 
-# In[8]:
 
 def _get_layout(ws, handle: int) -> dict:
     """
@@ -304,7 +633,6 @@ def _get_layout(ws, handle: int) -> dict:
     })
 
 
-# In[9]:
 
 def _get_object_handle(ws, app_handle: int, ObjectId: str) -> int:
     """
@@ -319,7 +647,7 @@ def _get_object_handle(ws, app_handle: int, ObjectId: str) -> int:
         int: Object handle
     """
     logger.debug('_get_object_handle function started, app_handle = %s, ObjectId = %s', app_handle, ObjectId)
-    return query(ws, {
+    result = query(ws, {
       "jsonrpc": "2.0",
       "id": 4,
       "method": "GetObject",
@@ -327,10 +655,13 @@ def _get_object_handle(ws, app_handle: int, ObjectId: str) -> int:
       "params": [
         ObjectId
       ]
-    })['result']['qReturn']['qHandle']
+    })
+    if result is None or 'result' not in result:
+        logger.error('_get_object_handle failed for ObjectId = %s', ObjectId)
+        return None
+    return result['result']['qReturn']['qHandle']
 
 
-# In[10]:
 
 def _get_app_list(ws) -> pd.DataFrame:
     """
@@ -352,12 +683,15 @@ def _get_app_list(ws) -> pd.DataFrame:
         "id": 1
         })
     
+    if zu is None or 'result' not in zu or 'qDocList' not in zu['result']:
+        logger.error('_get_app_list failed: unexpected response')
+        return pd.DataFrame()
+
     df = pd.json_normalize(zu['result']['qDocList'])
     logger.debug('_get_app_list function completed, len(df): %s', len(df))
     return df
 
 
-# In[70]:
 
 def _get_var_pandas(ws, app_handle: int) -> pd.DataFrame:
     """
@@ -410,7 +744,6 @@ def _get_var_pandas(ws, app_handle: int) -> pd.DataFrame:
 # zu = GetVarList(1)
 
 
-# In[71]:
 
 def _get_ms_pandas(ws, app_handle: int) -> pd.DataFrame:
     """
@@ -450,6 +783,10 @@ def _get_ms_pandas(ws, app_handle: int) -> pd.DataFrame:
         }
     )
 
+    if query_result is None or 'result' not in query_result or 'qReturn' not in query_result['result'] \
+            or 'qHandle' not in query_result['result']['qReturn']:
+        raise ValueError('Could not get MeasureList handle')
+
     list_handle = query_result['result']['qReturn']['qHandle']
 
     layout = _get_layout(ws, list_handle)
@@ -465,7 +802,6 @@ def _get_ms_pandas(ws, app_handle: int) -> pd.DataFrame:
 # zu = GetMsList(1)
 
 
-# In[72]:
 
 def _get_sheet_pandas(ws, app_handle: int) -> pd.DataFrame:
     """
@@ -502,6 +838,10 @@ def _get_sheet_pandas(ws, app_handle: int) -> pd.DataFrame:
       ]
     })
     
+    if query_result is None or 'result' not in query_result or 'qReturn' not in query_result['result'] \
+            or 'qHandle' not in query_result['result']['qReturn']:
+        raise ValueError('Could not get SheetList handle')
+
     list_handle = query_result['result']['qReturn']['qHandle']
     
     layout = _get_layout(ws, list_handle)
@@ -516,7 +856,6 @@ def _get_sheet_pandas(ws, app_handle: int) -> pd.DataFrame:
 # zu = GetSheetList(1)
 
 
-# In[14]:
 
 def _get_field_pandas(ws, app_handle: int) -> pd.DataFrame:
     """
@@ -569,7 +908,6 @@ def _get_field_pandas(ws, app_handle: int) -> pd.DataFrame:
 # zu = GetFieldList(1)
 
 
-# In[73]:
 
 def _get_dim_pandas(ws, app_handle: int) -> pd.DataFrame:
     """
@@ -613,12 +951,19 @@ def _get_dim_pandas(ws, app_handle: int) -> pd.DataFrame:
     if 'result' not in query_result or 'qReturn' not in query_result['result'] or 'qHandle' not in query_result['result']['qReturn']:
         raise ValueError('Query response structure is not as expected.')
 
+    def _normalize_dim_list(value):
+        if value is None or value != value:
+            return []
+        if isinstance(value, list):
+            return value
+        return [value]
+
     listHandle = query_result['result']['qReturn']['qHandle']
     df = pd.json_normalize(_get_layout(ws, listHandle)['result']['qLayout']['qDimensionList']['qItems'])
-    df['qDimFieldDefs'] = 'Unknown'
-    df['qDimFieldGrouping'] = 'Unknown'
-    df['qDimFieldLabels'] = 'Unknown'
-    df['qDimFieldBaseColor'] = 'Unknown'
+    df['qDimFieldDefs'] = pd.Series([None] * len(df), dtype='object')
+    df['qDimFieldGrouping'] = pd.Series(['Unknown'] * len(df), dtype='object')
+    df['qDimFieldLabels'] = pd.Series([None] * len(df), dtype='object')
+    df['qDimFieldBaseColor'] = pd.Series(['Unknown'] * len(df), dtype='object')
 
 
     # since the DimensionList method does not return the field name, we need to get it from each dimension separately
@@ -641,13 +986,13 @@ def _get_dim_pandas(ws, app_handle: int) -> pd.DataFrame:
             "params": {}
             })
         
-        df.at[i, 'qDimFieldDefs'] = query_result['result']['qProp']['qDim']['qFieldDefs']
-        df.at[i, 'qDimFieldGrouping'] = query_result['result']['qProp']['qDim']['qGrouping']
-        df.at[i, 'qDimFieldLabels'] = query_result['result']['qProp']['qDim']['qFieldLabels']
-        if 'coloring' in query_result['result']['qProp']['qDim'] \
-            and 'baseColor' in query_result['result']['qProp']['qDim']['coloring'] \
-            and 'color' in query_result['result']['qProp']['qDim']['coloring']['baseColor']:
-            df.at[i, 'qDimFieldBaseColor'] = query_result['result']['qProp']['qDim']['coloring']['baseColor']['color']
+        dim_props = query_result['result']['qProp']['qDim']
+        df.at[i, 'qDimFieldDefs'] = _normalize_dim_list(dim_props.get('qFieldDefs'))
+        df.at[i, 'qDimFieldGrouping'] = dim_props.get('qGrouping', 'Unknown')
+        df.at[i, 'qDimFieldLabels'] = _normalize_dim_list(dim_props.get('qFieldLabels'))
+        if 'coloring' in dim_props and 'baseColor' in dim_props['coloring'] \
+            and 'color' in dim_props['coloring']['baseColor']:
+            df.at[i, 'qDimFieldBaseColor'] = dim_props['coloring']['baseColor']['color']
 
     logger.debug('_get_dim_pandas function completed, len(df): %s', len(df))
     return df
@@ -690,6 +1035,10 @@ def _get_bookmark_pandas(ws, app_handle: int) -> pd.DataFrame:
         }
     )
 
+    if query_result is None or 'result' not in query_result or 'qReturn' not in query_result['result'] \
+            or 'qHandle' not in query_result['result']['qReturn']:
+        raise ValueError('Could not get BookmarkList handle')
+
     list_handle = query_result['result']['qReturn']['qHandle']
 
     layout = _get_layout(ws, list_handle)
@@ -721,7 +1070,6 @@ def _get_bookmark_pandas(ws, app_handle: int) -> pd.DataFrame:
     logger.debug(f'_get_bookmark_pandas function completed, len(df): {len(df)}')
     return df
 
-# In[16]:
 
 
 # version 0.1.23-05-03
@@ -749,7 +1097,6 @@ def _get_sheet_objects_pandas(ws, sheet_handle: int) -> pd.DataFrame:
     return odf
 
 
-# In[17]:
 
 def _get_object_ms_pandas(ws, object_handle):
     """
@@ -793,7 +1140,6 @@ def _get_object_ms_pandas(ws, object_handle):
   
 
 
-# In[18]:
 
 def _get_object_dim_pandas(ws, object_handle: int) -> pd.DataFrame:
     """
@@ -954,22 +1300,33 @@ class App:
         logger.error('App.save function completed, DoSave method returned incorrect response, %s', self.name)
         return False
 
-    def reload_data (self):
+    def reload_data(self) -> bool:
         """
-        Reloads the data in the application on the Qlik Sense Server
+        Reloads the data in the application on the Qlik Sense Server.
+
+        Returns:
+            True if the reload completed successfully, False otherwise.
         """
         logger.debug('App.reload_data function started, %s', self.name)
         
-        js = {
+        query_result = query(self.ws, {
                 "jsonrpc": "2.0",
                 "id": 2,
                 "method": "DoReloadEx",
                 "handle": self.handle,
                 "params": []
-            }
-        query_result = query(self.ws, js)
-        # to refine: check the response
-        logger.debug('App.reload_data function completed, %s', self.name)
+            })
+
+        if query_result is None or 'result' not in query_result:
+            logger.error('App.reload_data failed, no valid response for %s', self.name)
+            return False
+
+        success = query_result['result'].get('qReturn', {}).get('qSuccess', False)
+        if success:
+            logger.info('App.reload_data completed successfully, %s', self.name)
+        else:
+            logger.warning('App.reload_data completed, but qSuccess is False for %s', self.name)
+        return success
             
 
     def load(self, depth: int=1) -> bool:
@@ -997,12 +1354,11 @@ class App:
                     sh.load()
                     if depth >= 3:
                         for obj in sh.objects:
-                            if obj.type in ['distributionplot', 'piechart', 'table', 'barchart',
-        'pivot-table', 'boxplot', 'histogram', 'gauge', 'bulletchart',
-        'mekkochart', 'treemap', 'waterfallchart', 'kpi', 'combochart',
-        'scatterplot', 'listbox']:
-                                try: obj.load()
-                                except Exception as E: logger.warning('App.load function, error loading object. Object will be ignored. %s, %s', obj.name, str(E))
+                            if obj.type not in ('filterpane', 'container'):
+                                try:
+                                    obj.load()
+                                except Exception as E:
+                                    logger.warning('App.load function, error loading object. Object will be ignored. %s, %s', obj.name, str(E))
                 except Exception as E: logger.warning('App.load function, error loading sheet. Sheet will be ignored. %s, %s', sh.name, str(E))
         logger.debug('App.load function completed, %s', self.name)
         return True
@@ -1032,7 +1388,110 @@ class App:
         logger.debug('App._clearGarbage function completed, %s', self.name)
 
 
-# In[24]:
+    def evaluate(self, expression: str, filters: dict = None, method: str = 'evaluate') -> dict:
+        """
+        Evaluates a Qlik expression and returns the result.
+
+        Supports two modes:
+        - method='evaluate' (default): uses EvaluateEx (no filters) or a session hypercube
+          with qContextSetExpression (with filters). Does not modify selections.
+        - method='selections': applies filters via field selections, evaluates via
+          session hypercube, then clears selections. Modifies session state temporarily.
+
+        Args:
+            expression (str): Qlik expression or master measure name.
+                If the name matches a loaded master measure, its definition/library ID is used.
+            filters (dict, optional): field -> value(s) filter. Values can be int, float, str,
+                or list of these types. Example: {"Year": 2025, "Month": [1, 2]}
+            method (str): 'evaluate' (default) or 'selections'
+
+        Returns:
+            dict: {"value": float or None, "text": str, "is_numeric": bool}
+        """
+        logger.debug('App.evaluate started, expression=%s, filters=%s, method=%s',
+                     expression, filters, method)
+
+        if method not in ('evaluate', 'selections'):
+            raise ValueError(f"Unknown method '{method}'. Use 'evaluate' or 'selections'.")
+
+        is_master = False
+        library_id = None
+        definition = expression
+
+        if expression in self.measures.children:
+            is_master = True
+            library_id = self.measures[expression].id
+            definition = self.measures[expression].definition
+            logger.debug('App.evaluate: resolved master measure "%s", id=%s', expression, library_id)
+
+        if filters is None:
+            result = _evaluate_expression(self.ws, self.handle, definition)
+            logger.debug('App.evaluate completed (EvaluateEx, no filters), result=%s', result)
+            return result
+
+        if method == 'evaluate':
+            set_modifier = _build_set_modifier(filters)
+            hc_result = _create_session_hypercube(
+                self.ws, self.handle,
+                expression=None if is_master else definition,
+                library_id=library_id if is_master else None,
+                context_set_expression=set_modifier
+            )
+            _destroy_session_object(self.ws, self.handle, hc_result['id'])
+            result = {"value": hc_result['value'], "text": hc_result['text'], "is_numeric": hc_result['is_numeric']}
+            logger.debug('App.evaluate completed (hypercube + qContextSetExpression), result=%s', result)
+            return result
+
+        if method == 'selections':
+            hc_result = None
+            try:
+                _clear_all(self.ws, self.handle)
+                for field_name, values in filters.items():
+                    if not isinstance(values, list):
+                        values = [values]
+                    fh = _get_field_handle(self.ws, self.handle, field_name)
+                    _select_field_values(self.ws, fh, values)
+
+                hc_result = _create_session_hypercube(
+                    self.ws, self.handle,
+                    expression=None if is_master else definition,
+                    library_id=library_id if is_master else None
+                )
+                result = {"value": hc_result['value'], "text": hc_result['text'], "is_numeric": hc_result['is_numeric']}
+                logger.debug('App.evaluate completed (selections + hypercube), result=%s', result)
+                return result
+            finally:
+                if hc_result:
+                    _destroy_session_object(self.ws, self.handle, hc_result['id'])
+                _clear_all(self.ws, self.handle)
+
+
+    def clear_selections(self) -> bool:
+        """
+        Clears all current selections in the app.
+
+        Returns:
+            bool: True if successful
+        """
+        return _clear_all(self.ws, self.handle)
+
+
+    def select_values(self, field_name: str, values: list, toggle: bool = False) -> bool:
+        """
+        Selects values in a field.
+
+        Args:
+            field_name (str): name of the field to select in
+            values (list): values to select (int, float, or str)
+            toggle (bool): if True, uses toggle selection mode
+
+        Returns:
+            bool: True if successful
+        """
+        handle = _get_field_handle(self.ws, self.handle, field_name)
+        return _select_field_values(self.ws, handle, values, toggle)
+
+
 
 class ChildrenIterator:
     def __init__(self, children):
@@ -1049,7 +1508,6 @@ class ChildrenIterator:
         raise StopIteration
 
 
-# In[65]:
 
 class AppChildren():
     """
@@ -1073,17 +1531,17 @@ class AppChildren():
         logger.debug('AppChildren.__setitem__ function started, _type = %s, childName = %s', self._type, childName)
         self.children[childName] = var
             
-    def __delitem__(cls, childName):
-        logger.debug('AppChildren.__delitem__ function started, _type = %s, childName = %s', cls._type, childName)
-        del cls.children[childName]
-        cls.count -= 1
+    def __delitem__(self, childName):
+        logger.debug('AppChildren.__delitem__ function started, _type = %s, childName = %s', self._type, childName)
+        del self.children[childName]
+        self.count -= 1
             
     def __iter__(self):
         # initializing collection if empty
         logger.debug('AppChildren.__iter__ function started')
         if self.count == 0:
             try: zvb = self['']
-            except: logger.debug('AppChildren.__iter__ function, collection is empty, loading...')
+            except KeyError: logger.debug('AppChildren.__iter__ function, collection is empty, loading...')
         return ChildrenIterator(self)
     
     def load(self) -> bool:
@@ -1103,7 +1561,7 @@ class AppChildren():
                 logger.debug('AppChildren.load function, no variables found')
                 return True
             for varName in self.df['qName']:
-                if varName == varName:              # skip NaN values if any
+                if pd.notna(varName):
                     var = Variable(self, varName)
                     var.app_handle = self.app_handle
                     
@@ -1124,7 +1582,7 @@ class AppChildren():
                 logger.debug('AppChildren.load function, no measures found')
                 return True
             for msName in self.df['qMeta.title']:
-                if msName == msName:             # skip NaN values if any
+                if pd.notna(msName):
                     ms = Measure(self, msName)
                     ms.app_handle = self.app_handle
 
@@ -1141,12 +1599,12 @@ class AppChildren():
                     if 'qData.measure.qNumFormat.qDec' in self.df.columns: ms.format_dec = row['qData.measure.qNumFormat.qDec']
                     if 'qData.measure.qNumFormat.qThou' in self.df.columns: ms.format_thou = row['qData.measure.qNumFormat.qThou']
                     if 'qData.measure.coloring.baseColor.color' in self.df.columns: ms.base_color = row['qData.measure.coloring.baseColor.color']
-                    if 'qMeta.createdDate' in self.df.columns: 
+                    if 'qMeta.createdDate' in self.df.columns:
                         try: ms.created_date = dt.datetime.strptime(row['qMeta.createdDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
-                        except: pass
+                        except (ValueError, TypeError): pass
                     if 'qMeta.modifiedDate' in self.df.columns: 
                         try: ms.modified_date = dt.datetime.strptime(row['qMeta.modifiedDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
-                        except: pass
+                        except (ValueError, TypeError): pass
 
                     self[msName] = ms
                     self.count += 1
@@ -1158,7 +1616,7 @@ class AppChildren():
                 logger.debug('AppChildren.load function, no sheets found')
                 return True
             for shName in self.df['qMeta.title']:
-                if shName == shName:             # skip NaN values if any
+                if pd.notna(shName):
                     sh = Sheet(self, shName)
                     sh.app_handle = self.app_handle
                     
@@ -1167,10 +1625,10 @@ class AppChildren():
                     if 'qMeta.description' in self.df.columns: sh.description = row['qMeta.description']
                     try: 
                         if 'qMeta.created_date' in self.df.columns: sh.created_date = dt.datetime.strptime(row['qMeta.createdDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
-                    except: pass
+                    except (ValueError, TypeError): pass
                     try:
                         if 'qMeta.modifiedDate' in self.df.columns: sh.modified_date = dt.datetime.strptime(row['qMeta.modifiedDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
-                    except: pass
+                    except (ValueError, TypeError): pass
                     if 'qMeta.published' in self.df.columns: sh.published = row['qMeta.published']
                     if 'qMeta.approved' in self.df.columns: sh.approved = row['qMeta.approved']
                     if 'qMeta.owner.id' in self.df.columns: sh.owner_id = row['qMeta.owner.id']
@@ -1186,7 +1644,7 @@ class AppChildren():
                 logger.debug('AppChildren.load function, no fields found')
                 return True
             for fName in self.df['qFields.qName']:
-                if fName == fName:             # skip NaN values if any
+                if pd.notna(fName):
                     f = Field(fName)
                     f.app_handle = self.app_handle
                     
@@ -1211,19 +1669,19 @@ class AppChildren():
                 logger.debug('AppChildren.load function, no dimensions found')
                 return True
             for dimName in self.df['qMeta.title']:
-                if dimName == dimName:             # skip NaN values if any
+                if pd.notna(dimName):
                     dim = Dimension(self, dimName)
                     dim.app_handle = self.app_handle
 
                     row = self.df[self.df['qMeta.title'] == dimName].iloc[0]
                     dim.id = row['qInfo.qId']
-                    dim.definition = row['qDimFieldDefs'] 
-                    dim.label = row['qDimFieldLabels']
+                    dim.definition = row['qDimFieldDefs'] if isinstance(row['qDimFieldDefs'], list) else []
+                    dim.label = row['qDimFieldLabels'] if isinstance(row['qDimFieldLabels'], list) else []
                     dim.base_color = row['qDimFieldBaseColor']
                     try: dim.created_date = dt.datetime.strptime(row['qMeta.createdDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
-                    except: pass
+                    except (ValueError, TypeError): pass
                     try: dim.modified_date = dt.datetime.strptime(row['qMeta.modifiedDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
-                    except: pass
+                    except (ValueError, TypeError): pass
 
                     self[dimName] = dim
                     self.count += 1
@@ -1235,7 +1693,7 @@ class AppChildren():
                 logger.debug('AppChildren.load function, no bookmarks found')
                 return True
             for bmName in self.df['qMeta.title']:
-                if bmName == bmName:             # skip NaN values if any
+                if pd.notna(bmName):
                     bm = Bookmark(self, bmName)
                     bm.app_handle = self.app_handle
 
@@ -1249,9 +1707,9 @@ class AppChildren():
                     bm.published = row['qMeta.published']
                     bm.approved = row['qMeta.approved']
                     try: bm.created_date = dt.datetime.strptime(row['qMeta.createdDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
-                    except: pass
+                    except (ValueError, TypeError): pass
                     try: bm.modified_date = dt.datetime.strptime(row['qMeta.modifiedDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
-                    except: pass
+                    except (ValueError, TypeError): pass
 
                     self[bmName] = bm
                     self.count += 1
@@ -1454,9 +1912,9 @@ class AppChildren():
                 if 'qData.measure.qNumFormat.qThou' in self.df.columns: ms.format_thou = row['qData.measure.qNumFormat.qThou']
                 if 'qData.measure.coloring.baseColor.color' in self.df.columns: ms.base_color = row['qData.measure.coloring.baseColor.color']
                 try: ms.created_date = dt.datetime.strptime(row['qMeta.createdDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
-                except: pass
+                except (ValueError, TypeError): pass
                 try: ms.modified_date = dt.datetime.strptime(row['qMeta.modifiedDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
-                except: pass
+                except (ValueError, TypeError): pass
 
                 self[name] = ms
                 self.count += 1
@@ -1532,7 +1990,7 @@ class AppChildren():
                 # add new line to df
                 self.df = _get_dim_pandas(self.ws, self.app_handle)
                 dim.id = prop_result['result']['qProp']['qInfo']['qId']
-                self.df = pd.concat([self.df, pd.DataFrame({col: [dim.id] if col == 'qInfo.qId' else None for col in self.df.columns})])
+                self.df = pd.concat([self.df, pd.DataFrame({col: [dim.id] if col == 'qInfo.qId' else [None] for col in self.df.columns})])
                 self.df.reset_index(inplace=True)   # otherwise the list can not be added to the df
                 row_label = self.df.index[self.df['qInfo.qId'] == dim.id].tolist()[0]
                 self.df.at[row_label, 'qMeta.title'] = dim.name
@@ -1611,10 +2069,10 @@ class AppChildren():
             if 'qMeta.description' in self.df.columns: sh.description = row['qMeta.description']
             try: 
                 if 'qMeta.created_date' in self.df.columns: sh.created_date = dt.datetime.strptime(row['qMeta.createdDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
-            except: pass
+            except (ValueError, TypeError): pass
             try: 
                 if 'qMeta.modifiedDate' in self.df.columns: sh.modified_date = dt.datetime.strptime(row['qMeta.modifiedDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
-            except: pass
+            except (ValueError, TypeError): pass
             if 'qMeta.published' in self.df.columns: sh.published = row['qMeta.published']
             if 'qMeta.approved' in self.df.columns: sh.approved = row['qMeta.approved']
             if 'qMeta.owner.id' in self.df.columns: sh.owner_id = row['qMeta.owner.id']
@@ -1634,7 +2092,6 @@ class AppChildren():
 
 
 
-# In[64]:
 
 class Variable:
     """
@@ -1663,13 +2120,17 @@ class Variable:
         Gets the handle of the variable
         """
         logger.debug('Variable.get_handle function started, %s', self.name)
-        self.handle = query(self.parent.ws, {
+        result = query(self.parent.ws, {
           "jsonrpc": "2.0",
           "id": 4,
           "method": "GetVariableById",
           "handle": self.app_handle,
           "params": [self.id]
-        })['result']['qReturn']['qHandle']
+        })
+        if result is None or 'result' not in result:
+            logger.error('Variable.get_handle failed for %s', self.name)
+            return None
+        self.handle = result['result']['qReturn']['qHandle']
         logger.debug('Variable.get_handle function completed, %s', self.handle)
         return self.handle
     
@@ -1780,7 +2241,7 @@ class Variable:
             logger.error('Failed to add new variable for renaming, old_name = %s, new_name = %s', old_name, new_name)
             return False
         
-    def get_layout(self) -> json:
+    def get_layout(self) -> dict:
         """
         Returns the layout of the variable
         """
@@ -1791,7 +2252,6 @@ class Variable:
 
 
 
-# In[21]:
 
 class Field:
     """
@@ -1809,7 +2269,6 @@ class Field:
         self.key_type, self.tags = '', ''
 
 
-# In[22]:
 
 class Measure:
     """
@@ -1834,13 +2293,17 @@ class Measure:
         Gets the handle of the measure
         """
         logger.debug('Measure.get_handle function started, %s', self.name)
-        self.handle = query(self.parent.ws, {
+        result = query(self.parent.ws, {
           "jsonrpc": "2.0",
           "id": 4,
           "method": "GetMeasure",
           "handle": self.app_handle,
           "params": [self.id]
-        })['result']['qReturn']['qHandle']
+        })
+        if result is None or 'result' not in result:
+            logger.error('Measure.get_handle failed for %s', self.name)
+            return None
+        self.handle = result['result']['qReturn']['qHandle']
         logger.debug('Measure.get_handle function completed, %s', self.handle)
         return self.handle
     
@@ -2062,7 +2525,7 @@ class Measure:
         if target_app.measures.count == 0: target_app.measures.load()
         return target_app.measures.add(source = self)
         
-    def get_layout(self) -> json:
+    def get_layout(self) -> dict:
         """
         Returns the layout of the measure
         """
@@ -2070,7 +2533,7 @@ class Measure:
         self.get_handle()
         return _get_layout(self.parent.ws, self.handle)
     
-    def get_properties(self) -> json:
+    def get_properties(self) -> dict:
         """
         Returns the properties of the measure
         """
@@ -2079,7 +2542,6 @@ class Measure:
         return _get_properties(self.parent.ws, self.handle)
 
 
-# In[23]:
 
 class Dimension:
     """
@@ -2107,13 +2569,17 @@ class Dimension:
             Handle of the dimension
         """
         logger.debug('Dimension.get_handle function started, name = %s', self.name)
-        self.handle = query(self.parent.ws, {
+        result = query(self.parent.ws, {
           "jsonrpc": "2.0",
           "id": 4,
           "method": "GetDimension",
           "handle": self.app_handle,
           "params": [self.id]
-        })['result']['qReturn']['qHandle']
+        })
+        if result is None or 'result' not in result:
+            logger.error('Dimension.get_handle failed for %s', self.name)
+            return None
+        self.handle = result['result']['qReturn']['qHandle']
         logger.debug('Dimension.get_handle function completed, name = %s', self.name)
         return self.handle
     
@@ -2131,21 +2597,17 @@ class Dimension:
         logger.debug('Dimension.update function started, name = %s', self.name)
         self.get_handle()
 
-        # if definition or labels are strings, convert them to lists
-        if isinstance(definition, str): definition = [definition]
-        if isinstance(label, str): label = [label]
-        
-        # check if new values are provided, otherwise use old ones
-        def gn(x, y):
-            if y is None: 
-                if str(x) == 'nan': return []
-                else: return x
-            else: return y
-            
-        definition, label, base_color = \
-            gn(self.definition, definition), \
-            gn(self.label, label), \
-            gn(self.base_color, base_color)
+        def _normalize_dim_list(value):
+            if value is None or str(value) == 'nan':
+                return []
+            if isinstance(value, list):
+                return value
+            return [value]
+
+        definition = _normalize_dim_list(self.definition if definition is None else definition)
+        label = _normalize_dim_list(self.label if label is None else label)
+        if base_color is None:
+            base_color = '' if str(self.base_color) == 'nan' else self.base_color
 
         t = {
           "jsonrpc": "2.0",
@@ -2206,6 +2668,10 @@ class Dimension:
             })
         
         # delete value from dimensions collection
+        if query_result is None or 'result' not in query_result or 'qSuccess' not in query_result['result']:
+            logger.error('Failed to delete dimension, unexpected response: %s', query_result)
+            return False
+
         if query_result['result']['qSuccess']:
             del self.parent[self.name]
             self.parent.df = self.parent.df[self.parent.df['qInfo.qId'] != self.id]
@@ -2272,7 +2738,7 @@ class Dimension:
         if target_app.dimensions.count == 0: target_app.dimensions.load()
         return target_app.dimensions.add(source = self)
         
-    def get_layout(self) -> json:
+    def get_layout(self) -> dict:
         """
         Returns the layout of the dimension
         """
@@ -2280,7 +2746,7 @@ class Dimension:
         self.get_handle()
         return _get_layout(self.parent.ws, self.handle)
     
-    def get_properties(self) -> json:
+    def get_properties(self) -> dict:
         """
         Returns the properties of the dimension
         """
@@ -2316,7 +2782,7 @@ class Sheet:
         
     def get_handle(self) -> int:
         logger.debug('Sheet.get_handle function started, name = %s', self.name)
-        self.handle = query(self.parent.ws, {
+        result = query(self.parent.ws, {
               "jsonrpc": "2.0",
               "id": 4,
               "method": "GetObject",
@@ -2324,7 +2790,11 @@ class Sheet:
               "params": [
                 self.id
               ]
-            })['result']['qReturn']['qHandle']
+            })
+        if result is None or 'result' not in result:
+            logger.error('Sheet.get_handle failed for %s', self.name)
+            return None
+        self.handle = result['result']['qReturn']['qHandle']
         logger.debug('Sheet.get_handle function finished, handle = %s', self.handle)
         return self.handle
 
@@ -2442,7 +2912,7 @@ class Sheet:
 
         return target_sheet.id
 
-    def get_layout(self) -> json:
+    def get_layout(self) -> dict:
         """
         Returns the layout of the sheet
         """
@@ -2450,7 +2920,7 @@ class Sheet:
         self.get_handle()
         return _get_layout(self.parent.ws, self.handle)
     
-    def get_properties(self) -> json:
+    def get_properties(self) -> dict:
         """
         Returns the properties of the sheet
         """
@@ -2459,7 +2929,6 @@ class Sheet:
         return _get_properties(self.parent.ws, self.handle)
     
 
-# In[27]:
 
 class SheetChildren():
     """
@@ -2485,10 +2954,10 @@ class SheetChildren():
         logger.debug('SheetChildren.__setitem__ started, name = %s', childName)
         self.children[childName] = var
             
-    def __delitem__(cls, childName):
+    def __delitem__(self, childName):
         logger.debug('SheetChildren.__delitem__ started, name = %s', childName)
-        del cls.children[childName]
-        cls.count -= 1
+        del self.children[childName]
+        self.count -= 1
             
     def __iter__(self):
         # initializing collection if empty
@@ -2539,7 +3008,6 @@ class SheetChildren():
     
 
 
-# In[28]:
 
 class Object:
     """
@@ -2570,13 +3038,17 @@ class Object:
 
         logger.debug('Object.get_handle started, sheet = %s, name = %s, id = %s, app_handle = %s'\
                      , self.sheet.name, self.name, self.id, self.app_handle)
-        self.handle = query(self.sheet.parent.ws, {
+        result = query(self.sheet.parent.ws, {
           "jsonrpc": "2.0",
           "id": 4,
           "method": "GetObject",
           "handle": self.app_handle,
           "params": [self.id]
-        })['result']['qReturn']['qHandle']
+        })
+        if result is None or 'result' not in result:
+            logger.error('Object.get_handle failed for %s', self.name)
+            return None
+        self.handle = result['result']['qReturn']['qHandle']
         logger.debug('Object.get_handle finished, handle = %s', self.handle)
         return self.handle
 
@@ -2644,7 +3116,7 @@ class Object:
         logger.error('Object.export_data failed, sheet = %s, name = %s, id = %s, file_type = %s, error: %s', \
                      self.sheet.name, self.name, self.id, file_type, query_result)
         
-    def get_layout(self) -> json:
+    def get_layout(self) -> dict:
         """
         Returns the layout of the object
         """
@@ -2652,7 +3124,7 @@ class Object:
         self.get_handle()
         return _get_layout(self.sheet.parent.ws, self.handle)
     
-    def get_properties(self) -> json:
+    def get_properties(self) -> dict:
         """
         Returns the properties of the object
         """
@@ -2833,7 +3305,6 @@ class Object:
         
 
 
-# In[29]:
 
 class ObjectDimension():
     """
@@ -2987,7 +3458,6 @@ class ObjectDimension():
         return zu
 
 
-# In[30]:
 
 class ObjectMeasure():
     """
@@ -3184,7 +3654,6 @@ class ObjectMeasure():
         return zu
 
 
-# In[31]:
 
 class ObjectChildren():
     """
@@ -3219,10 +3688,10 @@ class ObjectChildren():
         logger.debug('ObjectChildren.__setitem__ started, childCaller = %s', childCaller)
         self.children[childCaller] = var
             
-    def __delitem__(cls, childCaller):
+    def __delitem__(self, childCaller):
         logger.debug('ObjectChildren.__delitem__ started, childCaller = %s', childCaller)
-        del cls.children[childCaller]
-        cls.count -= 1
+        del self.children[childCaller]
+        self.count -= 1
             
     def __iter__(self):
         # initializing collection if empty
@@ -3230,7 +3699,7 @@ class ObjectChildren():
         logger.debug('ObjectChildren.__iter__ started, %s, %s', self.parent.name, self._type)
         if self.count == 0:
             try: zvb = self['']
-            except: 1
+            except KeyError: pass
         return ChildrenIterator(self)
     
     def load(self) -> bool:
@@ -3380,7 +3849,7 @@ class ObjectChildren():
             if format_thou != '': logger.warning("format_thou can't be used with dimensions, field will be ignored")
 
             # receiving properties of parent object
-            t = query({
+            t = query(self.ws, {
                   "jsonrpc": "2.0",
                   "id": 4,
                   "method": "GetProperties",
@@ -3470,7 +3939,7 @@ class ObjectChildren():
             logger.debug(t)
             
             # setting new properties
-            zu = query({
+            zu = query(self.ws, {
                   "jsonrpc": "2.0",
                   "id": 4,
                   "method": "SetProperties",
@@ -3491,7 +3960,7 @@ class ObjectChildren():
 class Bookmark:
     """
     The class, representing the bookmarks of the application
-    Member of the App.measures collection
+    Member of the App.bookmarks collection
     """
 
     def __init__(self, parent, bookmarkName):
@@ -3511,17 +3980,21 @@ class Bookmark:
         Gets the handle of the bookmark
         """
         logger.debug('Bookmark.get_handle function started, %s', self.name)
-        self.handle = query(self.parent.ws, {
+        result = query(self.parent.ws, {
           "jsonrpc": "2.0",
           "id": 4,
           "method": "GetBookmark",
           "handle": self.app_handle,
           "params": [self.id]
-        })['result']['qReturn']['qHandle']
+        })
+        if result is None or 'result' not in result:
+            logger.error('Bookmark.get_handle failed for %s', self.name)
+            return None
+        self.handle = result['result']['qReturn']['qHandle']
         logger.debug('Bookmark.get_handle function completed, %s', self.handle)
         return self.handle
         
-    def get_layout(self) -> json:
+    def get_layout(self) -> dict:
         """
         Returns the layout of the bookmark
         """

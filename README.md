@@ -25,6 +25,10 @@ source_app.sheets['Source_sheet_name'].copy(target_app)
 pip install qsea
 ```
 
+Public installation remains `pip install qsea`.
+
+Maintainer and publish workflow is documented separately in `docs/publish_workflow.md`. Release artifacts are built via `uv build`.
+
 ## Table of Contents
 - [Getting started](#getting-started)
 - [Full Guide](#full-guide)
@@ -32,6 +36,9 @@ pip install qsea
         - [App.load()](#appload)
         - [App.save()](#appsave)
         - [App.reload_data()](#appreload_data)
+        - [App.evaluate()](#appevaluate)
+        - [App.clear_selections()](#appclear_selections)
+        - [App.select_values()](#appselect_values)
         - [App.children](#appchildren)
     - [AppChildren class](#appchildren-class)
         - [AppChildren add](#appchildrenadd)
@@ -236,6 +243,63 @@ App.save()
 Starts the script of reloading data into the Qlik Sense Application.
 ```python
 App.reload_data()
+```
+
+#### App.evaluate()
+Evaluates a Qlik expression and returns the result. Supports master measures by name and raw Qlik expressions.
+
+Args:
+* expression (str): Qlik expression or master measure name. If the name matches a loaded master measure, its library ID and definition are used automatically.
+* filters (dict, optional): field name -> value(s). Values can be int, float, str, or list of these types.
+* method (str, optional): evaluation method
+    - 'evaluate' (default): uses EvaluateEx (without filters) or a session hypercube with qContextSetExpression (with filters). Does not modify current selections. Safe for published apps.
+    - 'selections': applies filters via field selections, evaluates via session hypercube, then clears selections. Temporarily modifies session state.
+
+Returns: dict with keys `value` (float or None), `text` (str), `is_numeric` (bool).
+
+```python
+# Simple expression
+result = app.evaluate('sum([Sales])')
+print(result)  # {"value": 1500000.0, "text": "1 500 000", "is_numeric": True}
+
+# Master measure by name (measures must be loaded via app.load())
+result = app.evaluate('Total Sales', filters={"Year": 2025, "Month": 2})
+
+# Raw expression with user-defined set analysis
+result = app.evaluate('sum({<[Year]={2024}>} [Sales])')
+
+# Selections fallback for complex expressions
+result = app.evaluate(
+    'sum([Sales]) / count(distinct [Customer])',
+    filters={"Year": 2025},
+    method='selections'
+)
+```
+
+#### App.clear_selections()
+Clears all current selections in the app.
+
+Returns: True if successful
+
+```python
+app.clear_selections()
+```
+
+#### App.select_values()
+Selects values in a field. Useful for manual selection management before calling `evaluate()`.
+
+Args:
+* field_name (str): name of the field
+* values (list): values to select
+* toggle (bool, optional): if True, uses toggle selection mode. Defaults to False.
+
+Returns: True if successful
+
+```python
+app.select_values("Year", [2025])
+app.select_values("Month", [1, 2, 3])
+result = app.evaluate('sum([Sales])')
+app.clear_selections()
 ```
 
 #### App.children
