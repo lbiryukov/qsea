@@ -1248,6 +1248,92 @@ def _get_object_subitem_pandas(ws, object_handle: int) -> pd.DataFrame:
     logger.debug('_get_object_subitem_pandas function completed, len(df): %s', len(odf))
     return odf
 
+
+def _get_hypercube_data(ws, handle: int, path: str = '/qHyperCubeDef') -> pd.DataFrame:
+    """
+    Fetches all data from an object's hypercube via GetHyperCubeData
+    and returns it as a pandas DataFrame.
+
+    Uses pagination to handle datasets larger than the Engine API limit
+    of 10 000 cells per request.
+
+    Args:
+        ws: websocket connection
+        handle (int): object handle
+        path (str): hypercube definition path, default '/qHyperCubeDef'
+
+    Returns:
+        pd.DataFrame with dimension and measure columns
+
+    Raises:
+        ValueError: if layout structure is unexpected or hypercube is missing
+    """
+    logger.debug('_get_hypercube_data started, handle=%s, path=%s', handle, path)
+
+    layout = _get_layout(ws, handle)
+    if layout is None or 'result' not in layout or 'qLayout' not in layout['result']:
+        raise ValueError('_get_hypercube_data: GetLayout returned unexpected structure.')
+
+    q_layout = layout['result']['qLayout']
+    if 'qHyperCube' not in q_layout:
+        raise ValueError('_get_hypercube_data: object does not contain a hypercube.')
+
+    hc = q_layout['qHyperCube']
+    total_cols = hc['qSize']['qcx']
+    total_rows = hc['qSize']['qcy']
+
+    dim_info = hc.get('qDimensionInfo', [])
+    ms_info = hc.get('qMeasureInfo', [])
+    num_dims = len(dim_info)
+
+    col_names = [d.get('qFallbackTitle', f'dim_{i}') for i, d in enumerate(dim_info)] + \
+                [m.get('qFallbackTitle', f'ms_{i}') for i, m in enumerate(ms_info)]
+
+    if total_rows == 0:
+        logger.debug('_get_hypercube_data: empty dataset, returning empty DataFrame')
+        return pd.DataFrame(columns=col_names)
+
+    page_height = max(1, 10000 // total_cols)
+    all_rows = []
+    offset = 0
+
+    while offset < total_rows:
+        chunk = min(page_height, total_rows - offset)
+        page_result = query(ws, {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "GetHyperCubeData",
+            "handle": handle,
+            "params": [path, [{"qTop": offset, "qLeft": 0,
+                               "qWidth": total_cols, "qHeight": chunk}]]
+        })
+
+        if page_result is None or 'result' not in page_result:
+            raise ValueError(f'_get_hypercube_data: GetHyperCubeData failed at offset {offset}.')
+
+        data_pages = page_result['result'].get('qDataPages', [])
+        if not data_pages:
+            break
+
+        for row in data_pages[0].get('qMatrix', []):
+            parsed_row = []
+            for i, cell in enumerate(row):
+                if i < num_dims:
+                    parsed_row.append(cell.get('qText', ''))
+                else:
+                    if cell.get('qIsNumeric', False):
+                        parsed_row.append(cell.get('qNum'))
+                    else:
+                        parsed_row.append(cell.get('qText', ''))
+            all_rows.append(parsed_row)
+
+        offset += page_height
+
+    df = pd.DataFrame(all_rows, columns=col_names)
+    logger.info('_get_hypercube_data completed, shape=%s', df.shape)
+    return df
+
+
 class App:
     """
     The class, representing the Qlik Sense application
@@ -3126,7 +3212,38 @@ class Object:
         
         logger.error('Object.export_data failed, sheet = %s, name = %s, id = %s, file_type = %s, error: %s', \
                      self.sheet.name, self.name, self.id, file_type, query_result)
-        
+
+    def get_data(self) -> Optional[pd.DataFrame]:
+        """
+        Fetches the object's hypercube data and returns it as a pandas DataFrame.
+
+        Dimensions are returned as text columns, measures as numeric (with text
+        fallback for non-numeric cells).  Pagination is handled automatically
+        for datasets exceeding the Engine API limit of 10 000 cells per request.
+
+        Returns:
+            pd.DataFrame on success, None if the object type has no hypercube
+            (e.g. filterpane, listbox).
+        """
+        logger.debug('Object.get_data started, sheet = %s, name = %s, id = %s',
+                      self.sheet.name, self.name, self.id)
+
+        if self.type in ('filterpane', 'listbox'):
+            logger.warning('Object.get_data: object type "%s" has no standard hypercube, '
+                           'sheet = %s, name = %s', self.type, self.sheet.name, self.name)
+            return None
+
+        self.get_handle()
+        try:
+            df = _get_hypercube_data(self.sheet.parent.ws, self.handle)
+            logger.info('Object.get_data finished, sheet = %s, name = %s, shape = %s',
+                        self.sheet.name, self.name, df.shape)
+            return df
+        except Exception as e:
+            logger.error('Object.get_data failed, sheet = %s, name = %s, id = %s, error: %s',
+                         self.sheet.name, self.name, self.id, e)
+            return None
+
     def get_layout(self) -> dict:
         """
         Returns the layout of the object

@@ -147,6 +147,27 @@ def test_object_export_data_returns_none_for_filter(app_factory):
     assert sheet.objects[FILTER_OBJECT_ID].export_data("csv") is None
 
 
+def test_object_get_data_returns_dataframe_for_chart(app_factory):
+    import pandas as pd
+    app = app_factory()
+    sheet = app.sheets[VISUALS_SHEET_NAME]
+    sheet.load()
+
+    df = sheet.objects[EXPORT_OBJECT_ID].get_data()
+    assert df is not None
+    assert isinstance(df, pd.DataFrame)
+    assert len(df.columns) > 0
+    assert len(df) > 0
+
+
+def test_object_get_data_returns_none_for_filter(app_factory):
+    app = app_factory()
+    sheet = app.sheets[VISUALS_SHEET_NAME]
+    sheet.load()
+
+    assert sheet.objects[FILTER_OBJECT_ID].get_data() is None
+
+
 def test_get_layout_works_for_master_items_sheet_object_and_bookmark(app_factory, name_factory, cleanup_registry):
     measure_name = name_factory("NewMs123")
     dimension_name = name_factory("NewDim123")
