@@ -12,7 +12,13 @@ from qsea._selections import (_evaluate_expression, _clear_all,
                                _create_session_hypercube, _destroy_session_object)
 from qsea._loaders import (_get_var_pandas, _get_ms_pandas,
                             _get_sheet_pandas, _get_field_pandas, _get_dim_pandas,
-                            _get_bookmark_pandas)
+                            _get_bookmark_pandas, _get_name_id_index,
+                            _get_single_variable as _get_single_variable_func,
+                            _get_single_variable_by_id as _get_single_variable_by_id_func,
+                            _get_single_measure as _get_single_measure_func,
+                            _get_single_dimension as _get_single_dimension_func,
+                            _get_single_sheet as _get_single_sheet_func,
+                            _get_single_bookmark as _get_single_bookmark_func)
 from qsea.sheet_objects import ChildrenIterator
 
 
@@ -296,6 +302,10 @@ class AppChildren():
     """
     The class, representing different collections of app objects, like master measures or dimensions
     A child of App class
+
+    Supports lazy-loading: collections are loaded from Engine API on first
+    access (iteration, indexing, len, ``in``, ``.df``).  Call ``load()``
+    explicitly to force a reload.
     """
     def __init__(self, parent, _type):
         self.parent = parent
@@ -305,9 +315,26 @@ class AppChildren():
         
         self.children = {}
         self.count = 0
-        
+        self._loaded = False
+        self._df = None
+        self._index = None
+
+    @property
+    def df(self):
+        self._ensure_loaded()
+        return self._df
+
+    @df.setter
+    def df(self, value):
+        self._df = value
+
+    def _ensure_loaded(self):
+        if not self._loaded:
+            self.load()
+
     def __getitem__(self, childName):
         logger.debug('AppChildren.__getitem__ function started, _type = %s, childName = %s', self._type, childName)
+        self._ensure_loaded()
         return self.children[childName]
     
     def __setitem__(self, childName, var):
@@ -321,19 +348,19 @@ class AppChildren():
             
     def __iter__(self):
         logger.debug('AppChildren.__iter__ function started')
-        if self.count == 0:
-            try: zvb = self['']
-            except KeyError: logger.debug('AppChildren.__iter__ function, collection is empty, loading...')
+        self._ensure_loaded()
         return ChildrenIterator(self)
 
     def __len__(self):
+        self._ensure_loaded()
         return self.count
 
     def __contains__(self, key):
+        self._ensure_loaded()
         return key in self.children
 
     def __repr__(self):
-        return f"AppChildren(type={self._type!r}, count={self.count})"
+        return f"AppChildren(type={self._type!r}, count={self.count}, loaded={self._loaded})"
 
     def load(self) -> bool:
         """
@@ -344,24 +371,26 @@ class AppChildren():
 
         logger.debug('AppChildren.load function started, _type = %s', self._type)
 
+        self._loaded = False
         self.count = 0
         self.children = {}
 
         if self._type == 'variables':
-            self.df = _get_var_pandas(self.parent.ws, self.app_handle)
-            if len(self.df) == 0:
+            self._df = _get_var_pandas(self.parent.ws, self.app_handle)
+            if len(self._df) == 0:
                 logger.debug('AppChildren.load function, no variables found')
+                self._loaded = True
                 return True
-            for varName in self.df['qName']:
+            for varName in self._df['qName']:
                 if pd.notna(varName):
                     var = Variable(self, varName)
                     var.app_handle = self.app_handle
                     
-                    row = self.df[self.df['qName'] == varName].iloc[0]
+                    row = self._df[self._df['qName'] == varName].iloc[0]
                     var.id = row['qInfo.qId']
-                    if 'qDefinition' in self.df.columns: var.definition = row['qDefinition']
-                    if 'qDescription' in self.df.columns: var.description = row['qDescription']
-                    if 'qIsScriptCreated' in self.df.columns: var.script_created = row['qIsScriptCreated']
+                    if 'qDefinition' in self._df.columns: var.definition = row['qDefinition']
+                    if 'qDescription' in self._df.columns: var.description = row['qDescription']
+                    if 'qIsScriptCreated' in self._df.columns: var.script_created = row['qIsScriptCreated']
                     if pd.isna(var.script_created): var.script_created = False
 
                     self[varName] = var
@@ -369,32 +398,33 @@ class AppChildren():
                     logger.debug('AppChildren.load function, variable object created, varName = %s, var.id = %s', varName, var.id)
 
         if self._type == 'measures':
-            self.df = _get_ms_pandas(self.parent.ws, self.app_handle)
-            if len(self.df) == 0:
+            self._df = _get_ms_pandas(self.parent.ws, self.app_handle)
+            if len(self._df) == 0:
                 logger.debug('AppChildren.load function, no measures found')
+                self._loaded = True
                 return True
-            for msName in self.df['qMeta.title']:
+            for msName in self._df['qMeta.title']:
                 if pd.notna(msName):
                     ms = Measure(self, msName)
                     ms.app_handle = self.app_handle
 
-                    row = self.df[self.df['qMeta.title'] == msName].iloc[0]
+                    row = self._df[self._df['qMeta.title'] == msName].iloc[0]
                     ms.id = row['qInfo.qId']
-                    if 'qMeta.description' in self.df.columns: ms.description = row['qMeta.description']
-                    if 'qData.measure.qDef' in self.df.columns: ms.definition = row['qData.measure.qDef']
-                    if 'qData.measure.qLabel' in self.df.columns: ms.label = row['qData.measure.qLabel']
-                    if 'qData.measure.qLabelExpression' in self.df.columns: ms.label_expression = row['qData.measure.qLabelExpression']
-                    if 'qData.measure.qNumFormat.qFmt' in self.df.columns: ms.format = row['qData.measure.qNumFormat.qFmt']
-                    if 'qData.measure.qNumFormat.qType' in self.df.columns: ms.format_type = row['qData.measure.qNumFormat.qType']
-                    if 'qData.measure.qNumFormat.qnDec' in self.df.columns: ms.format_ndec = row['qData.measure.qNumFormat.qnDec']
-                    if 'qData.measure.qNumFormat.qUseThou' in self.df.columns: ms.format_use_thou = row['qData.measure.qNumFormat.qUseThou']
-                    if 'qData.measure.qNumFormat.qDec' in self.df.columns: ms.format_dec = row['qData.measure.qNumFormat.qDec']
-                    if 'qData.measure.qNumFormat.qThou' in self.df.columns: ms.format_thou = row['qData.measure.qNumFormat.qThou']
-                    if 'qData.measure.coloring.baseColor.color' in self.df.columns: ms.base_color = row['qData.measure.coloring.baseColor.color']
-                    if 'qMeta.createdDate' in self.df.columns:
+                    if 'qMeta.description' in self._df.columns: ms.description = row['qMeta.description']
+                    if 'qData.measure.qDef' in self._df.columns: ms.definition = row['qData.measure.qDef']
+                    if 'qData.measure.qLabel' in self._df.columns: ms.label = row['qData.measure.qLabel']
+                    if 'qData.measure.qLabelExpression' in self._df.columns: ms.label_expression = row['qData.measure.qLabelExpression']
+                    if 'qData.measure.qNumFormat.qFmt' in self._df.columns: ms.format = row['qData.measure.qNumFormat.qFmt']
+                    if 'qData.measure.qNumFormat.qType' in self._df.columns: ms.format_type = row['qData.measure.qNumFormat.qType']
+                    if 'qData.measure.qNumFormat.qnDec' in self._df.columns: ms.format_ndec = row['qData.measure.qNumFormat.qnDec']
+                    if 'qData.measure.qNumFormat.qUseThou' in self._df.columns: ms.format_use_thou = row['qData.measure.qNumFormat.qUseThou']
+                    if 'qData.measure.qNumFormat.qDec' in self._df.columns: ms.format_dec = row['qData.measure.qNumFormat.qDec']
+                    if 'qData.measure.qNumFormat.qThou' in self._df.columns: ms.format_thou = row['qData.measure.qNumFormat.qThou']
+                    if 'qData.measure.coloring.baseColor.color' in self._df.columns: ms.base_color = row['qData.measure.coloring.baseColor.color']
+                    if 'qMeta.createdDate' in self._df.columns:
                         try: ms.created_date = dt.datetime.strptime(row['qMeta.createdDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
                         except (ValueError, TypeError): pass
-                    if 'qMeta.modifiedDate' in self.df.columns: 
+                    if 'qMeta.modifiedDate' in self._df.columns: 
                         try: ms.modified_date = dt.datetime.strptime(row['qMeta.modifiedDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
                         except (ValueError, TypeError): pass
 
@@ -403,69 +433,72 @@ class AppChildren():
                     logger.debug('AppChildren.load function, measure object created, msName = %s, ms.id = %s', msName, ms.id)
                     
         if self._type == 'sheets':
-            self.df = _get_sheet_pandas(self.parent.ws, self.app_handle)
-            if len(self.df) == 0:
+            self._df = _get_sheet_pandas(self.parent.ws, self.app_handle)
+            if len(self._df) == 0:
                 logger.debug('AppChildren.load function, no sheets found')
+                self._loaded = True
                 return True
-            for shName in self.df['qMeta.title']:
+            for shName in self._df['qMeta.title']:
                 if pd.notna(shName):
                     sh = Sheet(self, shName)
                     sh.app_handle = self.app_handle
                     
-                    row = self.df[self.df['qMeta.title'] == shName].iloc[0]
+                    row = self._df[self._df['qMeta.title'] == shName].iloc[0]
                     sh.id = row['qInfo.qId']
-                    if 'qMeta.description' in self.df.columns: sh.description = row['qMeta.description']
+                    if 'qMeta.description' in self._df.columns: sh.description = row['qMeta.description']
                     try: 
-                        if 'qMeta.created_date' in self.df.columns: sh.created_date = dt.datetime.strptime(row['qMeta.createdDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
+                        if 'qMeta.created_date' in self._df.columns: sh.created_date = dt.datetime.strptime(row['qMeta.createdDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
                     except (ValueError, TypeError): pass
                     try:
-                        if 'qMeta.modifiedDate' in self.df.columns: sh.modified_date = dt.datetime.strptime(row['qMeta.modifiedDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
+                        if 'qMeta.modifiedDate' in self._df.columns: sh.modified_date = dt.datetime.strptime(row['qMeta.modifiedDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
                     except (ValueError, TypeError): pass
-                    if 'qMeta.published' in self.df.columns: sh.published = row['qMeta.published']
-                    if 'qMeta.approved' in self.df.columns: sh.approved = row['qMeta.approved']
-                    if 'qMeta.owner.id' in self.df.columns: sh.owner_id = row['qMeta.owner.id']
-                    if 'qMeta.owner.name' in self.df.columns: sh.owner_name = row['qMeta.owner.name']
+                    if 'qMeta.published' in self._df.columns: sh.published = row['qMeta.published']
+                    if 'qMeta.approved' in self._df.columns: sh.approved = row['qMeta.approved']
+                    if 'qMeta.owner.id' in self._df.columns: sh.owner_id = row['qMeta.owner.id']
+                    if 'qMeta.owner.name' in self._df.columns: sh.owner_name = row['qMeta.owner.name']
 
                     self[shName] = sh
                     self.count += 1
                     logger.debug('AppChildren.load function, sheet object created, shName = %s, sh.id = %s', shName, sh.id)
                 
         if self._type == 'fields':
-            self.df = _get_field_pandas(self.parent.ws, self.app_handle)
-            if len(self.df) == 0:
+            self._df = _get_field_pandas(self.parent.ws, self.app_handle)
+            if len(self._df) == 0:
                 logger.debug('AppChildren.load function, no fields found')
+                self._loaded = True
                 return True
-            for fName in self.df['qFields.qName']:
+            for fName in self._df['qFields.qName']:
                 if pd.notna(fName):
                     f = Field(fName)
                     f.app_handle = self.app_handle
                     
-                    row = self.df[self.df['qFields.qName'] == fName].iloc[0]
-                    if 'qName' in self.df.columns: f.table_name = row['qName']
-                    if 'qFields.qInformationDensity' in self.df.columns: f.information_density = row['qFields.qInformationDensity']
-                    if 'qFields.qnNonNulls' in self.df.columns: f.non_nulls = row['qFields.qnNonNulls']
-                    if 'qFields.qnRows' in self.df.columns: f.rows_count = row['qFields.qnRows']
-                    if 'qFields.qSubsetRatio' in self.df.columns: f.subset_ratio = row['qFields.qSubsetRatio']
-                    if 'qFields.qnTotalDistinctValues' in self.df.columns: f.distinct_values_count = row['qFields.qnTotalDistinctValues']
-                    if 'qFields.qnPresentDistinctValues' in self.df.columns: f.present_distinct_values = row['qFields.qnPresentDistinctValues']
-                    if 'qFields.qKeyType' in self.df.columns: f.key_type = row['qFields.qKeyType']
-                    if 'qFields.qTags' in self.df.columns: f.tags = row['qFields.qTags']
+                    row = self._df[self._df['qFields.qName'] == fName].iloc[0]
+                    if 'qName' in self._df.columns: f.table_name = row['qName']
+                    if 'qFields.qInformationDensity' in self._df.columns: f.information_density = row['qFields.qInformationDensity']
+                    if 'qFields.qnNonNulls' in self._df.columns: f.non_nulls = row['qFields.qnNonNulls']
+                    if 'qFields.qnRows' in self._df.columns: f.rows_count = row['qFields.qnRows']
+                    if 'qFields.qSubsetRatio' in self._df.columns: f.subset_ratio = row['qFields.qSubsetRatio']
+                    if 'qFields.qnTotalDistinctValues' in self._df.columns: f.distinct_values_count = row['qFields.qnTotalDistinctValues']
+                    if 'qFields.qnPresentDistinctValues' in self._df.columns: f.present_distinct_values = row['qFields.qnPresentDistinctValues']
+                    if 'qFields.qKeyType' in self._df.columns: f.key_type = row['qFields.qKeyType']
+                    if 'qFields.qTags' in self._df.columns: f.tags = row['qFields.qTags']
 
                     self[fName] = f
                     self.count += 1
                     logger.debug('AppChildren.load function, field object created, fName = %s', fName)
                 
         if self._type == 'dimensions':
-            self.df = _get_dim_pandas(self.parent.ws, self.app_handle)
-            if len(self.df) == 0:
+            self._df = _get_dim_pandas(self.parent.ws, self.app_handle)
+            if len(self._df) == 0:
                 logger.debug('AppChildren.load function, no dimensions found')
+                self._loaded = True
                 return True
-            for dimName in self.df['qMeta.title']:
+            for dimName in self._df['qMeta.title']:
                 if pd.notna(dimName):
                     dim = Dimension(self, dimName)
                     dim.app_handle = self.app_handle
 
-                    row = self.df[self.df['qMeta.title'] == dimName].iloc[0]
+                    row = self._df[self._df['qMeta.title'] == dimName].iloc[0]
                     dim.id = row['qInfo.qId']
                     dim.definition = row['qDimFieldDefs'] if isinstance(row['qDimFieldDefs'], list) else []
                     dim.label = row['qDimFieldLabels'] if isinstance(row['qDimFieldLabels'], list) else []
@@ -480,16 +513,17 @@ class AppChildren():
                     logger.debug('AppChildren.load function, dimension object created, dimName = %s, dim.id = %s', dimName, dim.id)
 
         if self._type == 'bookmarks':
-            self.df = _get_bookmark_pandas(self.parent.ws, self.app_handle)
-            if len(self.df) == 0:
+            self._df = _get_bookmark_pandas(self.parent.ws, self.app_handle)
+            if len(self._df) == 0:
                 logger.debug('AppChildren.load function, no bookmarks found')
+                self._loaded = True
                 return True
-            for bmName in self.df['qMeta.title']:
+            for bmName in self._df['qMeta.title']:
                 if pd.notna(bmName):
                     bm = Bookmark(self, bmName)
                     bm.app_handle = self.app_handle
 
-                    row = self.df[self.df['qMeta.title'] == bmName].iloc[0]
+                    row = self._df[self._df['qMeta.title'] == bmName].iloc[0]
                     bm.id = row['qInfo.qId']
                     bm.owner_id = row['qMeta.owner.id']
                     bm.owner_user_id = row['qMeta.owner.userId']
@@ -506,10 +540,140 @@ class AppChildren():
                     self[bmName] = bm
                     self.count += 1
                     logger.debug('AppChildren.load function, bookmark object created, bmName = %s, bm.id = %s', bmName, bm.id)
-        # else:
-        #     logger.warning('AppChildren.load function, %s already loaded, recreate the App object to reload', self._type)
-        # logger.debug('AppChildren.load function finished, _type = %s', self._type)
+
+        self._loaded = True
+        self._index = None
         return True
+
+
+    def _load_index(self) -> dict:
+        """
+        Load a lightweight name->ID index without creating Python objects.
+        Cached in ``self._index``; cleared by ``load()``.
+        """
+        if self._index is not None:
+            return self._index
+        self._index = _get_name_id_index(self.ws, self.app_handle, self._type)
+        return self._index
+
+
+    def get(self, name: str = None, id: str = None):
+        """
+        Fetch a single object by name or ID without loading the full collection.
+
+        If the collection is already loaded, looks up the item in memory.
+        Otherwise, queries the Engine API for just the requested object.
+
+        For Variables by name: uses GetVariableByName (no list needed).
+        For Measures/Dimensions/Sheets/Bookmarks by name: loads a lightweight
+        name->ID index, then fetches the individual object by ID.
+        For any type by ID: direct Engine API call.
+
+        The fetched object is cached in ``self.children`` for subsequent access.
+
+        Args:
+            name (str, optional): name of the object
+            id (str, optional): Qlik Sense internal ID
+
+        Returns:
+            The object if found, None otherwise.
+        """
+        from qsea.objects import Variable, Measure, Dimension, Sheet, Bookmark
+
+        if name is None and id is None:
+            raise ValueError('Either name or id must be provided')
+
+        if self._loaded:
+            if name is not None:
+                return self.children.get(name)
+            for child in self.children.values():
+                if getattr(child, 'id', None) == id:
+                    return child
+            return None
+
+        logger.debug('AppChildren.get started, type=%s, name=%s, id=%s', self._type, name, id)
+
+        if self._type == 'variables':
+            return self._get_single_variable(name, id, Variable)
+        if self._type == 'measures':
+            return self._get_single_measure(name, id, Measure)
+        if self._type == 'dimensions':
+            return self._get_single_dimension(name, id, Dimension)
+        if self._type == 'sheets':
+            return self._get_single_sheet(name, id, Sheet)
+        if self._type == 'bookmarks':
+            return self._get_single_bookmark(name, id, Bookmark)
+
+        return None
+
+
+    def _get_single_variable(self, name, obj_id, Variable):
+        if name is not None:
+            layout = _get_single_variable_func(self.ws, self.app_handle, name)
+        else:
+            layout = _get_single_variable_by_id_func(self.ws, self.app_handle, obj_id)
+        if layout is None:
+            return None
+        var = Variable._from_layout(self, layout)
+        self.children[var.name] = var
+        self.count = len(self.children)
+        return var
+
+    def _get_single_measure(self, name, obj_id, Measure):
+        if obj_id is None:
+            idx = self._load_index()
+            obj_id = idx.get(name)
+            if obj_id is None:
+                return None
+        props = _get_single_measure_func(self.ws, self.app_handle, obj_id)
+        if props is None:
+            return None
+        ms = Measure._from_properties(self, props)
+        self.children[ms.name] = ms
+        self.count = len(self.children)
+        return ms
+
+    def _get_single_dimension(self, name, obj_id, Dimension):
+        if obj_id is None:
+            idx = self._load_index()
+            obj_id = idx.get(name)
+            if obj_id is None:
+                return None
+        props = _get_single_dimension_func(self.ws, self.app_handle, obj_id)
+        if props is None:
+            return None
+        dim = Dimension._from_properties(self, props)
+        self.children[dim.name] = dim
+        self.count = len(self.children)
+        return dim
+
+    def _get_single_sheet(self, name, obj_id, Sheet):
+        if obj_id is None:
+            idx = self._load_index()
+            obj_id = idx.get(name)
+            if obj_id is None:
+                return None
+        layout = _get_single_sheet_func(self.ws, self.app_handle, obj_id)
+        if layout is None:
+            return None
+        sh = Sheet._from_layout(self, layout)
+        self.children[sh.name] = sh
+        self.count = len(self.children)
+        return sh
+
+    def _get_single_bookmark(self, name, obj_id, Bookmark):
+        if obj_id is None:
+            idx = self._load_index()
+            obj_id = idx.get(name)
+            if obj_id is None:
+                return None
+        layout = _get_single_bookmark_func(self.ws, self.app_handle, obj_id)
+        if layout is None:
+            return None
+        bm = Bookmark._from_layout(self, layout)
+        self.children[bm.name] = bm
+        self.count = len(self.children)
+        return bm
 
     
     def add(self, name: str = '', definition: str = '', description: str = '', label: str = '', label_expression: str = '', format_type: str = 'U', \

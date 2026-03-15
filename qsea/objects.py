@@ -38,6 +38,20 @@ class Variable:
     def __repr__(self):
         return f"Variable(name={self.name!r}, id={self.id!r})"
 
+    @staticmethod
+    def _from_layout(parent, layout: dict) -> 'Variable':
+        """Create a Variable from a raw Engine API GetLayout response."""
+        name = layout.get('qName', '')
+        var = Variable(parent, name)
+        var.app_handle = parent.app_handle
+        var.id = layout.get('qInfo', {}).get('qId', '')
+        var.definition = layout.get('qDefinition', '')
+        var.description = layout.get('qComment', '')
+        var.script_created = layout.get('qIsScriptCreated', False)
+        if pd.isna(var.script_created):
+            var.script_created = False
+        return var
+
     def get_handle(self) -> int:
         """
         Gets the handle of the variable
@@ -208,6 +222,28 @@ class Measure:
 
     def __repr__(self):
         return f"Measure(name={self.name!r}, id={self.id!r})"
+
+    @staticmethod
+    def _from_properties(parent, props: dict) -> 'Measure':
+        """Create a Measure from a raw Engine API GetProperties response (qProp)."""
+        title = props.get('qMetaDef', {}).get('title', '')
+        ms = Measure(parent, title)
+        ms.app_handle = parent.app_handle
+        ms.id = props.get('qInfo', {}).get('qId', '')
+        qm = props.get('qMeasure', {})
+        ms.definition = qm.get('qDef', '')
+        ms.label = qm.get('qLabel', '')
+        ms.label_expression = qm.get('qLabelExpression', '')
+        ms.description = props.get('qMetaDef', {}).get('description', '')
+        nf = qm.get('qNumFormat', {})
+        ms.format_type = nf.get('qType', '')
+        ms.format_ndec = nf.get('qnDec', -1)
+        ms.format_use_thou = nf.get('qUseThou', -1)
+        ms.format_dec = nf.get('qDec', '')
+        ms.format_thou = nf.get('qThou', '')
+        coloring = qm.get('coloring', {})
+        ms.base_color = coloring.get('baseColor', {}).get('color', '')
+        return ms
 
     def get_handle(self) -> int:
         """
@@ -482,6 +518,23 @@ class Dimension:
     def __repr__(self):
         return f"Dimension(name={self.name!r}, id={self.id!r})"
 
+    @staticmethod
+    def _from_properties(parent, props: dict) -> 'Dimension':
+        """Create a Dimension from a raw Engine API GetProperties response (qProp)."""
+        title = props.get('qMetaDef', {}).get('title', '')
+        dim = Dimension(parent, title)
+        dim.app_handle = parent.app_handle
+        dim.id = props.get('qInfo', {}).get('qId', '')
+        qd = props.get('qDim', {})
+        raw_defs = qd.get('qFieldDefs')
+        dim.definition = raw_defs if isinstance(raw_defs, list) else []
+        raw_labels = qd.get('qFieldLabels')
+        dim.label = raw_labels if isinstance(raw_labels, list) else []
+        coloring = qd.get('coloring', {})
+        dim.base_color = coloring.get('baseColor', {}).get('color', '')
+        dim.description = props.get('qMetaDef', {}).get('description', '')
+        return dim
+
     def get_handle(self) -> int:
         """
         Get the handle of the dimension
@@ -716,6 +769,30 @@ class Sheet:
     def __repr__(self):
         return f"Sheet(name={self.name!r}, id={self.id!r})"
 
+    @staticmethod
+    def _from_layout(parent, layout: dict) -> 'Sheet':
+        """Create a Sheet from a raw Engine API GetLayout response."""
+        title = layout.get('qMeta', {}).get('title', '')
+        sh = Sheet(parent, title)
+        sh.app_handle = parent.app_handle
+        sh.id = layout.get('qInfo', {}).get('qId', '')
+        sh.description = layout.get('qMeta', {}).get('description', '')
+        sh.published = layout.get('qMeta', {}).get('published', '')
+        sh.approved = layout.get('qMeta', {}).get('approved', '')
+        owner = layout.get('qMeta', {}).get('owner', {})
+        sh.owner_id = owner.get('id', '')
+        sh.owner_name = owner.get('name', '')
+        meta = layout.get('qMeta', {})
+        try:
+            sh.created_date = dt.datetime.strptime(meta['createdDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
+        except (KeyError, ValueError, TypeError):
+            pass
+        try:
+            sh.modified_date = dt.datetime.strptime(meta['modifiedDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
+        except (KeyError, ValueError, TypeError):
+            pass
+        return sh
+
     def get_handle(self) -> int:
         logger.debug('Sheet.get_handle function started, name = %s', self.name)
         result = query(self.parent.ws, {
@@ -884,6 +961,33 @@ class Bookmark:
 
     def __repr__(self):
         return f"Bookmark(name={self.name!r}, id={self.id!r})"
+
+    @staticmethod
+    def _from_layout(parent, layout: dict) -> 'Bookmark':
+        """Create a Bookmark from a raw Engine API GetLayout response."""
+        title = layout.get('qMeta', {}).get('title', '')
+        bm = Bookmark(parent, title)
+        bm.app_handle = parent.app_handle
+        bm.id = layout.get('qInfo', {}).get('qId', '')
+        bm.description = layout.get('qMeta', {}).get('description', '')
+        bm.published = layout.get('qMeta', {}).get('published', 0)
+        bm.approved = layout.get('qMeta', {}).get('approved', 0)
+        owner = layout.get('qMeta', {}).get('owner', {})
+        bm.owner_id = owner.get('id', '')
+        bm.owner_user_id = owner.get('userId', '')
+        bm.owner_name = owner.get('name', '')
+        bookmark_data = layout.get('qBookmark', {})
+        bm.state_data = bookmark_data.get('qStateData', '')
+        meta = layout.get('qMeta', {})
+        try:
+            bm.created_date = dt.datetime.strptime(meta['createdDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
+        except (KeyError, ValueError, TypeError):
+            pass
+        try:
+            bm.modified_date = dt.datetime.strptime(meta['modifiedDate'], '%Y-%m-%dT%H:%M:%S.%fZ')
+        except (KeyError, ValueError, TypeError):
+            pass
+        return bm
 
     def get_handle(self) -> int:
         """

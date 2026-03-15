@@ -399,6 +399,213 @@ def _get_bookmark_pandas(ws, app_handle: int) -> pd.DataFrame:
     return df
 
 
+def _get_name_id_index(ws, app_handle: int, collection_type: str) -> dict:
+    """
+    Load a lightweight name->ID mapping from a session list without
+    fetching per-item properties.  Much cheaper than a full load for
+    dimensions (avoids N*2 extra API calls).
+
+    Args:
+        ws: websocket connection
+        app_handle (int): App handle
+        collection_type (str): one of 'variables', 'measures', 'dimensions',
+                               'sheets', 'bookmarks'
+
+    Returns:
+        dict: {name: qlik_id, ...}
+    """
+    logger.debug('_get_name_id_index started, type=%s', collection_type)
+
+    if collection_type == 'variables':
+        df = _get_var_pandas(ws, app_handle)
+        if len(df) == 0:
+            return {}
+        return dict(zip(df['qName'], df['qInfo.qId']))
+
+    if collection_type == 'measures':
+        df = _get_ms_pandas(ws, app_handle)
+        if len(df) == 0:
+            return {}
+        return dict(zip(df['qMeta.title'], df['qInfo.qId']))
+
+    if collection_type == 'dimensions':
+        qr = query(ws, {
+            "jsonrpc": "2.0", "id": _next_rpc_id(),
+            "method": "CreateSessionObject", "handle": app_handle,
+            "params": [{"qInfo": {"qId": "DL_IDX", "qType": "DimensionList"},
+                        "qDimensionListDef": {"qType": "dimension",
+                                              "qData": {"title": "/title"}}}]
+        })
+        if qr is None or 'result' not in qr:
+            return {}
+        lh = qr['result']['qReturn']['qHandle']
+        layout = _get_layout(ws, lh)
+        _destroy_session_object(ws, app_handle, "DL_IDX")
+        items = layout['result']['qLayout']['qDimensionList'].get('qItems', [])
+        return {item['qMeta']['title']: item['qInfo']['qId'] for item in items
+                if item.get('qMeta', {}).get('title')}
+
+    if collection_type == 'sheets':
+        df = _get_sheet_pandas(ws, app_handle)
+        if len(df) == 0:
+            return {}
+        return dict(zip(df['qMeta.title'], df['qInfo.qId']))
+
+    if collection_type == 'bookmarks':
+        df = _get_bookmark_pandas(ws, app_handle)
+        if len(df) == 0:
+            return {}
+        return dict(zip(df['qMeta.title'], df['qInfo.qId']))
+
+    return {}
+
+
+def _get_single_variable(ws, app_handle: int, name: str) -> dict:
+    """
+    Fetch a single variable by name using GetVariableByName + GetLayout.
+
+    Returns:
+        dict with variable layout data, or None on failure.
+    """
+    logger.debug('_get_single_variable started, name=%s', name)
+    result = query(ws, {
+        "jsonrpc": "2.0", "id": _next_rpc_id(),
+        "method": "GetVariableByName",
+        "handle": app_handle,
+        "params": [name]
+    })
+    if result is None or 'result' not in result or 'qReturn' not in result['result']:
+        logger.warning('_get_single_variable: variable not found: %s', name)
+        return None
+    handle = result['result']['qReturn']['qHandle']
+    layout = _get_layout(ws, handle)
+    if layout is None or 'result' not in layout:
+        return None
+    return layout['result']['qLayout']
+
+
+def _get_single_variable_by_id(ws, app_handle: int, var_id: str) -> dict:
+    """
+    Fetch a single variable by ID using GetVariableById + GetLayout.
+
+    Returns:
+        dict with variable layout data, or None on failure.
+    """
+    logger.debug('_get_single_variable_by_id started, id=%s', var_id)
+    result = query(ws, {
+        "jsonrpc": "2.0", "id": _next_rpc_id(),
+        "method": "GetVariableById",
+        "handle": app_handle,
+        "params": [var_id]
+    })
+    if result is None or 'result' not in result or 'qReturn' not in result['result']:
+        logger.warning('_get_single_variable_by_id: variable not found: %s', var_id)
+        return None
+    handle = result['result']['qReturn']['qHandle']
+    layout = _get_layout(ws, handle)
+    if layout is None or 'result' not in layout:
+        return None
+    return layout['result']['qLayout']
+
+
+def _get_single_measure(ws, app_handle: int, measure_id: str) -> dict:
+    """
+    Fetch a single measure by ID using GetMeasure + GetProperties.
+
+    Returns:
+        dict with measure properties (qProp), or None on failure.
+    """
+    logger.debug('_get_single_measure started, id=%s', measure_id)
+    from qsea._engine import _get_properties
+    result = query(ws, {
+        "jsonrpc": "2.0", "id": _next_rpc_id(),
+        "method": "GetMeasure",
+        "handle": app_handle,
+        "params": [measure_id]
+    })
+    if result is None or 'result' not in result or 'qReturn' not in result['result']:
+        logger.warning('_get_single_measure: measure not found: %s', measure_id)
+        return None
+    handle = result['result']['qReturn']['qHandle']
+    props = _get_properties(ws, handle)
+    if props is None or 'result' not in props:
+        return None
+    return props['result']['qProp']
+
+
+def _get_single_dimension(ws, app_handle: int, dim_id: str) -> dict:
+    """
+    Fetch a single dimension by ID using GetDimension + GetProperties.
+
+    Returns:
+        dict with dimension properties (qProp), or None on failure.
+    """
+    logger.debug('_get_single_dimension started, id=%s', dim_id)
+    from qsea._engine import _get_properties
+    result = query(ws, {
+        "jsonrpc": "2.0", "id": _next_rpc_id(),
+        "method": "GetDimension",
+        "handle": app_handle,
+        "params": [dim_id]
+    })
+    if result is None or 'result' not in result or 'qReturn' not in result['result']:
+        logger.warning('_get_single_dimension: dimension not found: %s', dim_id)
+        return None
+    handle = result['result']['qReturn']['qHandle']
+    props = _get_properties(ws, handle)
+    if props is None or 'result' not in props:
+        return None
+    return props['result']['qProp']
+
+
+def _get_single_sheet(ws, app_handle: int, sheet_id: str) -> dict:
+    """
+    Fetch a single sheet by ID using GetObject + GetLayout.
+
+    Returns:
+        dict with sheet layout data, or None on failure.
+    """
+    logger.debug('_get_single_sheet started, id=%s', sheet_id)
+    result = query(ws, {
+        "jsonrpc": "2.0", "id": _next_rpc_id(),
+        "method": "GetObject",
+        "handle": app_handle,
+        "params": [sheet_id]
+    })
+    if result is None or 'result' not in result or 'qReturn' not in result['result']:
+        logger.warning('_get_single_sheet: sheet not found: %s', sheet_id)
+        return None
+    handle = result['result']['qReturn']['qHandle']
+    layout = _get_layout(ws, handle)
+    if layout is None or 'result' not in layout:
+        return None
+    return layout['result']['qLayout']
+
+
+def _get_single_bookmark(ws, app_handle: int, bookmark_id: str) -> dict:
+    """
+    Fetch a single bookmark by ID using GetBookmark + GetLayout.
+
+    Returns:
+        dict with bookmark layout data, or None on failure.
+    """
+    logger.debug('_get_single_bookmark started, id=%s', bookmark_id)
+    result = query(ws, {
+        "jsonrpc": "2.0", "id": _next_rpc_id(),
+        "method": "GetBookmark",
+        "handle": app_handle,
+        "params": [bookmark_id]
+    })
+    if result is None or 'result' not in result or 'qReturn' not in result['result']:
+        logger.warning('_get_single_bookmark: bookmark not found: %s', bookmark_id)
+        return None
+    handle = result['result']['qReturn']['qHandle']
+    layout = _get_layout(ws, handle)
+    if layout is None or 'result' not in layout:
+        return None
+    return layout['result']['qLayout']
+
+
 def _get_sheet_objects_pandas(ws, sheet_handle: int) -> pd.DataFrame:
     """
     Returns a dataframe with all objects on the sheet and their properties
