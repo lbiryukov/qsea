@@ -14,6 +14,7 @@ from qsea._loaders import (
     _get_object_subitem_pandas,
     _get_hypercube_data,
 )
+from qsea._selections import _clear_all, _get_field_handle, _select_field_values
 
 if TYPE_CHECKING:
     from qsea.app import App
@@ -815,7 +816,7 @@ class Object:
         logger.error('Object.export_data failed, sheet = %s, name = %s, id = %s, file_type = %s, error: %s', \
                      self.sheet.name, self.name, self.id, file_type, query_result)
 
-    def get_data(self) -> Optional[pd.DataFrame]:
+    def get_data(self, filters: dict = None) -> Optional[pd.DataFrame]:
         """
         Fetches the object's hypercube data and returns it as a pandas DataFrame.
 
@@ -823,12 +824,19 @@ class Object:
         fallback for non-numeric cells).  Pagination is handled automatically
         for datasets exceeding the Engine API limit of 10 000 cells per request.
 
+        Args:
+            filters (dict, optional): field -> value(s) filter. Values can be
+                int, float, str, or list of these types.
+                Example: {"Year": 2025, "Month": [1, 2]}
+                When provided, applies temporary field selections before fetching
+                data and clears them afterwards.
+
         Returns:
             pd.DataFrame on success, None if the object type has no hypercube
             (e.g. filterpane, listbox).
         """
-        logger.debug('Object.get_data started, sheet = %s, name = %s, id = %s',
-                      self.sheet.name, self.name, self.id)
+        logger.debug('Object.get_data started, sheet = %s, name = %s, id = %s, filters = %s',
+                      self.sheet.name, self.name, self.id, filters)
 
         if self.type in ('filterpane', 'listbox'):
             logger.warning('Object.get_data: object type "%s" has no standard hypercube, '
@@ -840,7 +848,21 @@ class Object:
             if handle is None:
                 logger.warning('Object.get_data: could not get handle for %s', self.name)
                 return None
-            df = _get_hypercube_data(self.ws, self.handle)
+
+            if filters:
+                _clear_all(self.ws, self.app_handle)
+                for field_name, values in filters.items():
+                    if not isinstance(values, list):
+                        values = [values]
+                    fh = _get_field_handle(self.ws, self.app_handle, field_name)
+                    _select_field_values(self.ws, fh, values)
+
+            try:
+                df = _get_hypercube_data(self.ws, self.handle)
+            finally:
+                if filters:
+                    _clear_all(self.ws, self.app_handle)
+
             logger.info('Object.get_data finished, sheet = %s, name = %s, shape = %s',
                         self.sheet.name, self.name, df.shape)
             return df
