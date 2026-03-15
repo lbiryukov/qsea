@@ -67,7 +67,7 @@ $smokeRoot = Join-Path $env:TEMP "qsea-publish-smoke"
 if (Test-Path $smokeRoot) { Remove-Item -Recurse -Force $smokeRoot }
 
 uv venv $smokeRoot
-uv pip install --python (Join-Path $smokeRoot "Scripts/python.exe") .\dist\qsea-1.0.0-py3-none-any.whl
+uv pip install --python (Join-Path $smokeRoot "Scripts/python.exe") (Get-ChildItem .\dist\qsea-*.whl).FullName
 & (Join-Path $smokeRoot "Scripts/python.exe") -c "import qsea; print(qsea.__file__); print(qsea._test())"
 ```
 

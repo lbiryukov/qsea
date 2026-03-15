@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qsea"
-version = "1.0.0"
+version = "1.1.0"
 description = "Convenient way to work with Qlik Sense Engine API from Python"
 dynamic = ["readme"]
 requires-python = ">=3.12"
@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/ncthuc/qsea"
+Homepage = "https://github.com/lbiryukov/qsea"
 Download = "https://pypi.org/project/qsea/"
 
 [dependency-groups]

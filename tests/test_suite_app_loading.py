@@ -113,21 +113,13 @@ def test_object_measure_library_id_update_persists(app_factory, cleanup_registry
 
 @pytest.mark.slow
 def test_multiple_apps_can_be_loaded_over_single_connection(connection):
-    app1 = qsea.App(connection, "План-факт продаж(6)")
+    app1 = qsea.App(connection, MAIN_APP_NAME)
     app1.load(3)
     assert app1.sheets.count >= 0
 
-    app2 = qsea.App(connection, "Дашборд(1)")
+    app2 = qsea.App(connection, TARGET_APP_NAME)
     app2.load(3)
     assert app2.sheets.count >= 0
-
-    app3 = qsea.App(connection, "ETL_0202_Transform_Факт SMART2(4)")
-    app3.load(3)
-    assert app3.sheets.count >= 0
-
-    app4 = qsea.App(connection, "Продажи, ROI, остатки(3)")
-    app4.load(3)
-    assert app4.sheets.count >= 0
 
 
 def test_object_export_data_returns_file_for_chart(app_factory):

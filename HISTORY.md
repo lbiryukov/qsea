@@ -1,5 +1,23 @@
 # History
 
+## [1.1.0] - 15/03/2026
+
+### Added
+- `App.evaluate()`: evaluate Qlik expressions and master measures with optional filters; supports `evaluate` (read-only, via EvaluateEx / session hypercube with qContextSetExpression) and `selections` (via field selections) methods
+- `App.clear_selections()`: clears all current selections in the app
+- `App.select_values()`: selects values in a field for manual selection management
+- `Object.get_data()`: fetches hypercube data from a chart or table and returns it as a pandas DataFrame with automatic pagination
+- `qsea.setup_logging()`: public API for configuring library logging (file or console output); NullHandler attached by default so log output is suppressed until explicitly enabled
+
+### Changed
+- Packaging migrated from `setup.py` to `pyproject.toml` with `setuptools.build_meta` backend
+- `_to_qlik()` now uses `json.dumps()` for proper string escaping
+- Maintainer workflow switched to `uv build` / `uv sync`
+
+### Fixed
+- Logging configuration: level parameter corrected (`logging.INFO` instead of `logging.info`)
+- Improved websocket connection error handling
+
 ## [0.0.24] - 2024-09-28
 - Object.copy() function now can copy complex objects such as filterpanes and containers.
 

@@ -24,6 +24,10 @@ dist/
 .DS_Store
 Thumbs.db
 
+# Windows reserved device names
+nul
+NUL
+
 # Test caches
 .pytest_cache/
 .coverage

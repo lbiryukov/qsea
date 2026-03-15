@@ -19,6 +19,12 @@ or copy a sheet with all charts from one app to another:
 source_app.sheets['Source_sheet_name'].copy(target_app)
 ```
 
+or evaluate a Qlik expression with filters, without modifying selections:
+```python
+result = app.evaluate('sum([Sales])', filters={"Year": 2025, "Month": 2})
+print(result)  # {"value": 150000.0, "text": "150 000", "is_numeric": True}
+```
+
 ## Installation
 
 ```python
@@ -101,6 +107,7 @@ qsea.setup_logging(log_level=logging.DEBUG)
     - [Object class](#object-class)
         - [Object properties](#object-properties)
         - [Object.export_data()](#objectexport_data)
+        - [Object.get_data()](#objectget_data)
         - [Object.copy()](#objectcopy)
         - [Object.load()](#objectload)
         - [Object.get_layout()](#objectget_layout)
@@ -200,7 +207,7 @@ sh = app.sheets['MySheet']
 sh.load()
 for obj in sh.objects:
     obj.load()
-    for ms on obj.measures:
+    for ms in obj.measures:
         print(ms.definition)
 ```
 
@@ -760,6 +767,22 @@ Args:
 * file_type (str, optional): 'xlsx' or 'csv', 'xlsx' by default
         
 Returns: the path to the downloaded file in case of success, None if failed
+
+#### Object.get_data()
+Fetches the object's hypercube data and returns it as a pandas DataFrame. Dimensions are returned as text columns, measures as numeric (with text fallback for non-numeric cells). Pagination is handled automatically for datasets exceeding the Engine API limit of 10 000 cells per request.
+
+Returns: pd.DataFrame on success, None if the object type has no hypercube (e.g. filterpane, listbox).
+
+```python
+sh = app.sheets['MySheet']
+sh.load()
+
+for obj in sh.objects:
+    obj.load()
+    df = obj.get_data()
+    if df is not None:
+        print(obj.type, df.shape)
+```
 
 #### Object.copy()
 Creates a copy of the object in the specified sheet of another app

@@ -16,11 +16,11 @@ def test_project_metadata_is_centralized_in_pyproject():
     project = load_pyproject()["project"]
 
     assert project["name"] == "qsea"
-    assert project["version"] == "1.0.0"
+    assert project["version"] == "1.1.0"
     assert project["dynamic"] == ["readme"]
     assert project["dependencies"] == ["pandas", "websocket-client"]
     assert project["authors"] == [{"name": "Lev Biriukov", "email": "lbiryukov@gmail.com"}]
-    assert project["urls"]["Homepage"] == "https://github.com/ncthuc/qsea"
+    assert project["urls"]["Homepage"] == "https://github.com/lbiryukov/qsea"
     assert project["urls"]["Download"] == "https://pypi.org/project/qsea/"
 
 
