@@ -10,7 +10,8 @@ from qsea._engine import (query, _open_connection, _open_doc, _get_app_id,
                            _get_object_handle, _next_rpc_id)
 from qsea._selections import (_evaluate_expression, _clear_all,
                                _get_field_handle, _select_field_values,
-                               _create_session_hypercube, _destroy_session_object)
+                               _create_session_hypercube, _destroy_session_object,
+                               _get_field_values, _validate_filter_values)
 from qsea._loaders import (_get_app_list, _get_var_pandas, _get_ms_pandas,
                             _get_sheet_pandas, _get_field_pandas, _get_dim_pandas,
                             _get_bookmark_pandas, _get_sheet_objects_pandas,
@@ -30,6 +31,7 @@ __all__ = [
     "_get_properties", "_set_properties", "_get_layout", "_get_object_handle", "_next_rpc_id",
     "_evaluate_expression", "_clear_all", "_get_field_handle", "_select_field_values",
     "_create_session_hypercube", "_destroy_session_object",
+    "_get_field_values", "_validate_filter_values",
     "_get_app_list", "_get_var_pandas", "_get_ms_pandas",
     "_get_sheet_pandas", "_get_field_pandas", "_get_dim_pandas",
     "_get_bookmark_pandas", "_get_sheet_objects_pandas",

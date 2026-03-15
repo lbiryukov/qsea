@@ -224,6 +224,112 @@ def _create_session_hypercube(ws, app_handle: int, expression: str = None,
     }
 
 
+def _get_field_values(ws, app_handle: int, field_name: str) -> set:
+    """
+    Returns the set of distinct values in a field by creating a temporary
+    session ListObject, reading all data pages, then destroying the object.
+
+    Values are returned as strings for uniform comparison.
+
+    Args:
+        ws: websocket connection
+        app_handle (int): handle of the open app
+        field_name (str): name of the field
+
+    Returns:
+        set: distinct field values as strings
+
+    Raises:
+        ValueError: if the field does not exist or the engine returns an error
+    """
+    logger.debug('_get_field_values started, field_name = %s', field_name)
+
+    object_id = 'fval_' + str(uuid.uuid4())[:8]
+
+    result = query(ws, {
+        "jsonrpc": "2.0",
+        "id": _next_rpc_id(),
+        "method": "CreateSessionObject",
+        "handle": app_handle,
+        "params": [{
+            "qInfo": {"qId": object_id, "qType": "field-values"},
+            "qListObjectDef": {
+                "qDef": {
+                    "qFieldDefs": [field_name],
+                    "qSortCriterias": [{"qSortByLoadOrder": 1}]
+                },
+                "qInitialDataFetch": [{"qTop": 0, "qLeft": 0, "qHeight": 10000, "qWidth": 1}]
+            }
+        }]
+    })
+
+    if result is None:
+        raise ValueError(f"Failed to create ListObject for field '{field_name}': no response.")
+    if 'error' in result:
+        raise ValueError(f"Field '{field_name}' not found in the app data model.")
+
+    obj_handle = result['result']['qReturn']['qHandle']
+
+    try:
+        layout = _get_layout(ws, obj_handle)
+        if layout is None:
+            raise ValueError(f"GetLayout returned no response for field '{field_name}'.")
+
+        data_pages = layout['result']['qLayout']['qListObject']['qDataPages']
+        values = set()
+        for page in data_pages:
+            for row in page.get('qMatrix', []):
+                for cell in row:
+                    text = cell.get('qText')
+                    if text is not None and cell.get('qState') != 'X':
+                        values.add(text)
+        logger.debug('_get_field_values completed, field=%s, count=%d', field_name, len(values))
+        return values
+    finally:
+        _destroy_session_object(ws, app_handle, object_id)
+
+
+def _validate_filter_values(ws, app_handle: int, filters: dict) -> dict:
+    """
+    Validates that filter values exist in their respective fields.
+
+    For each field in filters, queries the engine for the field's distinct values
+    and checks whether the requested filter values are present.
+
+    Args:
+        ws: websocket connection
+        app_handle (int): handle of the open app
+        filters (dict): field -> value(s) mapping
+
+    Returns:
+        dict: {field_name: [missing_values]} for fields with missing values.
+              Empty dict means all values are valid.
+
+    Raises:
+        ValueError: if a field does not exist in the data model
+    """
+    logger.debug('_validate_filter_values started, filters = %s', filters)
+    missing = {}
+
+    for field_name, values in filters.items():
+        if not isinstance(values, list):
+            values = [values]
+
+        actual_values = _get_field_values(ws, app_handle, field_name)
+        actual_str = actual_values
+
+        not_found = []
+        for v in values:
+            if str(v) not in actual_str:
+                not_found.append(v)
+
+        if not_found:
+            missing[field_name] = not_found
+
+    logger.debug('_validate_filter_values completed, missing = %s', missing)
+    return missing
+
+
 def _destroy_session_object(ws, app_handle: int, object_id: str) -> bool:
     """
     Destroys a session object via DestroySessionObject Engine API method.

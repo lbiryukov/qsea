@@ -40,3 +40,6 @@ debug/
 
 # Temporary scripts
 temp_scripts/
+
+# Temporary tests
+temp_tests/

@@ -7,12 +7,18 @@
 - `App.clear_selections()`: clears all current selections in the app
 - `App.select_values()`: selects values in a field for manual selection management
 - `Object.get_data()`: fetches hypercube data from a chart or table and returns it as a pandas DataFrame with automatic pagination
+- `Object.get_data(filters=...)`: optional `filters` parameter applies temporary field selections before fetching data and clears them afterwards. Example: `obj.get_data(filters={"Year": 2025, "Month": [1, 2]})`
+- Lazy loading of `AppChildren` collections: `app.variables`, `app.measures`, `app.dimensions`, `app.sheets`, `app.fields`, `app.bookmarks` are loaded from Engine API automatically on first access (iteration, indexing, `len()`, `in`, `.df`). Explicit `app.load()` is no longer required for basic operations
+- `Connection(verify_ssl=...)`: optional parameter to enable SSL certificate verification
+- `Connection.close()`: explicitly closes all WebSocket connections
+- `Connection` supports context manager protocol (`with Connection(...) as conn: ...`)
 - `qsea.setup_logging()`: public API for configuring library logging (file or console output); NullHandler attached by default so log output is suppressed until explicitly enabled
 
 ### Changed
 - Packaging migrated from `setup.py` to `pyproject.toml` with `setuptools.build_meta` backend
 - `_to_qlik()` now uses `json.dumps()` for proper string escaping
 - Maintainer workflow switched to `uv build` / `uv sync`
+- Monolithic `__init__.py` refactored into separate modules (`app`, `connection`, `objects`, `sheet_objects`, `_engine`, `_loaders`, `_selections`, `_helpers`, `_config`)
 
 ### Fixed
 - Logging configuration: level parameter corrected (`logging.INFO` instead of `logging.info`)

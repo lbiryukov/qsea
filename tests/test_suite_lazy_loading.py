@@ -220,19 +220,14 @@ class TestGetSingleObject:
             app.measures.get()
 
     def test_get_caches_result_for_subsequent_access(self, connection):
-        app = qsea.App(connection, MAIN_APP_NAME)
-        ms1 = app.measures.get(name=next(iter(
-            qsea.App(connection, MAIN_APP_NAME).measures.children.keys()
-        )) if False else None)
-
         app_ref = qsea.App(connection, MAIN_APP_NAME)
         app_ref.measures.load()
         ref_name = next(iter(app_ref.measures.children.keys()))
 
-        app2 = qsea.App(connection, MAIN_APP_NAME)
-        ms1 = app2.measures.get(name=ref_name)
+        app = qsea.App(connection, MAIN_APP_NAME)
+        ms1 = app.measures.get(name=ref_name)
         assert ms1 is not None
-        ms2 = app2.measures.get(name=ref_name)
+        ms2 = app.measures.get(name=ref_name)
         assert ms2 is ms1
 
     def test_get_then_full_load_still_works(self, connection):

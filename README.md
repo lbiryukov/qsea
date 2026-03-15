@@ -25,6 +25,12 @@ result = app.evaluate('sum([Sales])', filters={"Year": 2025, "Month": 2})
 print(result)  # {"value": 150000.0, "text": "150 000", "is_numeric": True}
 ```
 
+or evaluate a master measure by its name:
+```python
+result = app.evaluate('Total Sales', filters={"Year": 2025})
+print(result["value"])
+```
+
 ## Installation
 
 ```python
@@ -145,17 +151,24 @@ Now we can connect to the Qlik Server:
 conn = qsea.Connection(header_user, qlik_url)
 ```
 
+By default, SSL certificate verification is disabled. To enable it (e.g. for production environments with valid certificates):
+```python
+conn = qsea.Connection(header_user, qlik_url, verify_ssl=True)
+```
+
+The connection can also be used as a context manager:
+```python
+with qsea.Connection(header_user, qlik_url) as conn:
+    app = qsea.App(conn, 'MyAppName')
+    # ... work with the app ...
+```
+
 Let's create an App object, which represents the application in Qlik Sense.
 ```python
 app = qsea.App(conn, 'MyAppName')
 ```
 
-By default the App class object is almost empty. Use the `load()` function to make use of it:
-```python
-app.load()
-```
-
-Now all variables, master measures, and dimensions are uploaded to our App object. We can access them by their name:
+Collections such as variables, measures, and dimensions are loaded automatically on first access (lazy loading). You can start working with them right away:
 ```python
 var = app.variables['MyVar']
 var.definition
@@ -190,8 +203,6 @@ Let's copy the set of master dimensions into a new app:
 ```python
 source_app = qsea.App(conn, 'Source AppName')
 target_app = qsea.App(conn, 'Target AppName')
-source_app.dimensions.load()
-target_app.dimensions.load()
 
 for dim in source_app.dimensions:
     if dim.name not in [target_dim.name for target_dim in target_app.dimensions]: 
@@ -240,18 +251,37 @@ Good luck!
 ## Full Guide
 
 ### Connection class
-The class that represents a dictionary of websocket connections to Qlik Sense Engine API
-Since one websocket connection can be used only for one app, this class is used to handle all websocket connections
-New websocket connections are created automatically when a new app object is created
+The class that represents a dictionary of websocket connections to Qlik Sense Engine API.
+Since one websocket connection can be used only for one app, this class is used to handle all websocket connections.
+New websocket connections are created automatically when a new app object is created.
+
+Args:
+* header_user (dict): authorization header
+* qlik_url (str): Qlik Sense Engine API URL
+* timeout (int, optional): connection timeout in seconds. Defaults to 10.
+* verify_ssl (bool, optional): whether to verify SSL certificates. Defaults to False. Set to True for production environments with valid certificates.
+
+The Connection object supports the context manager protocol and will automatically close all WebSocket connections on exit:
+```python
+with qsea.Connection(header_user, qlik_url) as conn:
+    app = qsea.App(conn, 'MyAppName')
+```
+
+You can also close connections explicitly:
+```python
+conn.close()
+```
 
 Note that the Qlik Sense Engine API has a limit of active parallel connections. Since there is no way to terminate the existing connection (except restarting the proxy server that is generally unacceptable), one have to wait for the Qlik Sense Engine to terminate some of the old sessions.
 There is no way to reconnect to an existing connection if the Connection class object is recreated. Thus, it is highly recommended to avoid recreating the Connection class object in order to avoid reaching the limit of active connections.
 
 ### App class
-The class, representing the Qlik Sense application. This is the main object to work with. The class is empty when created; run the `load()` function to make use of it.
+The class, representing the Qlik Sense application. This is the main object to work with.
+
+All collections (variables, measures, dimensions, sheets, fields, bookmarks) support lazy loading: data is fetched from the Engine API automatically on first access (iteration, indexing by name, `len()`, `in`, `.df`). You can start using them immediately after creating the App object without calling `load()`.
 
 #### App.load()
-Loads data from the Qlik Sense application into an App object.
+Loads all collections from the Qlik Sense application into an App object at once. Useful when you need to preload everything or control the loading depth. Not required for basic operations thanks to lazy loading.
 
 Args:
 * depth (int): depth of loading
@@ -286,8 +316,11 @@ Args:
 * method (str, optional): evaluation method
     - 'evaluate' (default): uses EvaluateEx (without filters) or a session hypercube with qContextSetExpression (with filters). Does not modify current selections. Safe for published apps.
     - 'selections': applies filters via field selections, evaluates via session hypercube, then clears selections. Temporarily modifies session state.
+* validate_filters (bool, optional): if True (default), validates that filter field names exist in the data model and that filter values exist in their respective fields. Raises `ValueError` with a descriptive message if validation fails. Set to False to skip validation for better performance.
 
 Returns: dict with keys `value` (float or None), `text` (str), `is_numeric` (bool).
+
+Raises: `ValueError` if `validate_filters=True` and filter field names or values are invalid.
 
 ```python
 # Simple expression
@@ -306,6 +339,15 @@ result = app.evaluate(
     filters={"Year": 2025},
     method='selections'
 )
+
+# Filter validation catches typos and wrong values (enabled by default)
+# This raises ValueError because field "Month" exists but has no values 1,2,3:
+result = app.evaluate('sum([Sales])', filters={"Month": [1, 2, 3]})
+# ValueError: Some filter values do not exist in the data:
+#   [Month]: values not found: [1, 2, 3]
+
+# Skip validation for better performance when you are confident in your filters
+result = app.evaluate('sum([Sales])', filters={"Year": 2025}, validate_filters=False)
 ```
 
 #### App.clear_selections()
@@ -771,7 +813,13 @@ Returns: the path to the downloaded file in case of success, None if failed
 #### Object.get_data()
 Fetches the object's hypercube data and returns it as a pandas DataFrame. Dimensions are returned as text columns, measures as numeric (with text fallback for non-numeric cells). Pagination is handled automatically for datasets exceeding the Engine API limit of 10 000 cells per request.
 
+Args:
+* filters (dict, optional): field name -> value(s). Values can be int, float, str, or list of these types. When provided, applies temporary field selections before fetching data and clears them afterwards.
+* validate_filters (bool, optional): if True (default), validates that filter field names exist in the data model and that filter values exist in their respective fields. Raises `ValueError` with a descriptive message if validation fails. Set to False to skip validation for better performance.
+
 Returns: pd.DataFrame on success, None if the object type has no hypercube (e.g. filterpane, listbox).
+
+Raises: `ValueError` if `validate_filters=True` and filter field names or values are invalid.
 
 ```python
 sh = app.sheets['MySheet']
@@ -782,6 +830,18 @@ for obj in sh.objects:
     df = obj.get_data()
     if df is not None:
         print(obj.type, df.shape)
+```
+
+With filters:
+```python
+obj = sh.objects['object_id']
+obj.load()
+df = obj.get_data(filters={"Year": 2025, "Month": [1, 2]})
+```
+
+Skip validation for better performance:
+```python
+df = obj.get_data(filters={"Year": 2025}, validate_filters=False)
 ```
 
 #### Object.copy()

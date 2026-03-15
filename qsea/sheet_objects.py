@@ -816,7 +816,8 @@ class Object:
         logger.error('Object.export_data failed, sheet = %s, name = %s, id = %s, file_type = %s, error: %s', \
                      self.sheet.name, self.name, self.id, file_type, query_result)
 
-    def get_data(self, filters: dict = None) -> Optional[pd.DataFrame]:
+    def get_data(self, filters: dict = None,
+                 validate_filters: bool = True) -> Optional[pd.DataFrame]:
         """
         Fetches the object's hypercube data and returns it as a pandas DataFrame.
 
@@ -830,10 +831,18 @@ class Object:
                 Example: {"Year": 2025, "Month": [1, 2]}
                 When provided, applies temporary field selections before fetching
                 data and clears them afterwards.
+            validate_filters (bool): if True (default), validates that filter
+                field names exist in the data model and that filter values exist
+                in their fields. Set to False to skip validation for better
+                performance.
 
         Returns:
             pd.DataFrame on success, None if the object type has no hypercube
             (e.g. filterpane, listbox).
+
+        Raises:
+            ValueError: if filter field names or values are invalid
+                (when validate_filters=True)
         """
         logger.debug('Object.get_data started, sheet = %s, name = %s, id = %s, filters = %s',
                       self.sheet.name, self.name, self.id, filters)
@@ -842,6 +851,10 @@ class Object:
             logger.warning('Object.get_data: object type "%s" has no standard hypercube, '
                            'sheet = %s, name = %s', self.type, self.sheet.name, self.name)
             return None
+
+        if validate_filters and filters:
+            app = self.sheet.parent.parent
+            app._validate_filters(filters)
 
         try:
             handle = self.get_handle()

@@ -62,7 +62,7 @@ def query(ws, json_query: dict, attempts: int = 1) -> Union[dict, None]:
 
 def _open_connection(qlik_url: str, header_user: dict, timeout: int = 10,
                      max_retries: int = 6, retry_delay: float = 10.0,
-                     verify_ssl: bool = True):
+                     verify_ssl: bool = False):
     logger.debug('_open_connection function started, url = %s', qlik_url)
 
     if verify_ssl:

@@ -9,7 +9,8 @@ from qsea._engine import query, _open_connection, _open_doc, _get_layout, _next_
 from qsea._helpers import _build_set_modifier, _find_key
 from qsea._selections import (_evaluate_expression, _clear_all,
                                _get_field_handle, _select_field_values,
-                               _create_session_hypercube, _destroy_session_object)
+                               _create_session_hypercube, _destroy_session_object,
+                               _validate_filter_values)
 from qsea._loaders import (_get_var_pandas, _get_ms_pandas,
                             _get_sheet_pandas, _get_field_pandas, _get_dim_pandas,
                             _get_bookmark_pandas, _get_name_id_index,
@@ -193,7 +194,8 @@ class App:
         logger.debug('App._clearGarbage function completed, %s', self.name)
 
 
-    def evaluate(self, expression: str, filters: dict = None, method: str = 'evaluate') -> dict:
+    def evaluate(self, expression: str, filters: dict = None, method: str = 'evaluate',
+                 validate_filters: bool = True) -> dict:
         """
         Evaluates a Qlik expression and returns the result.
 
@@ -209,12 +211,18 @@ class App:
             filters (dict, optional): field -> value(s) filter. Values can be int, float, str,
                 or list of these types. Example: {"Year": 2025, "Month": [1, 2]}
             method (str): 'evaluate' (default) or 'selections'
+            validate_filters (bool): if True (default), validates that filter field names
+                exist in the data model and that filter values exist in their fields.
+                Set to False to skip validation for better performance.
 
         Returns:
             dict: {"value": float or None, "text": str, "is_numeric": bool}
+
+        Raises:
+            ValueError: if filter field names or values are invalid (when validate_filters=True)
         """
-        logger.debug('App.evaluate started, expression=%s, filters=%s, method=%s',
-                     expression, filters, method)
+        logger.debug('App.evaluate started, expression=%s, filters=%s, method=%s, validate_filters=%s',
+                     expression, filters, method, validate_filters)
 
         if method not in ('evaluate', 'selections'):
             raise ValueError(f"Unknown method '{method}'. Use 'evaluate' or 'selections'.")
@@ -233,6 +241,9 @@ class App:
             result = _evaluate_expression(self.ws, self.handle, definition)
             logger.debug('App.evaluate completed (EvaluateEx, no filters), result=%s', result)
             return result
+
+        if validate_filters:
+            self._validate_filters(filters)
 
         if method == 'evaluate':
             set_modifier = _build_set_modifier(filters)
@@ -270,6 +281,37 @@ class App:
                     _destroy_session_object(self.ws, self.handle, hc_result['id'])
                 _clear_all(self.ws, self.handle)
 
+
+    def _validate_filters(self, filters: dict):
+        """
+        Validates filter field names and values against the app data model.
+
+        Step 1 -- checks that every filter key is a known field name.
+        Step 2 -- checks that filter values actually exist in their fields.
+
+        Raises:
+            ValueError: with a descriptive message listing unknown fields or
+                        missing values.
+        """
+        self.fields._ensure_loaded()
+        known_fields = set(self.fields.children.keys())
+
+        unknown = [f for f in filters if f not in known_fields]
+        if unknown:
+            raise ValueError(
+                f"Filter field(s) not found in the data model: {unknown}. "
+                f"Available fields ({len(known_fields)}): "
+                f"{sorted(known_fields)}"
+            )
+
+        missing = _validate_filter_values(self.ws, self.handle, filters)
+        if missing:
+            parts = []
+            for field, vals in missing.items():
+                parts.append(f"  [{field}]: values not found: {vals}")
+            raise ValueError(
+                "Some filter values do not exist in the data:\n" + "\n".join(parts)
+            )
 
     def clear_selections(self) -> bool:
         """
@@ -583,12 +625,14 @@ class AppChildren():
         if name is None and id is None:
             raise ValueError('Either name or id must be provided')
 
-        if self._loaded:
-            if name is not None:
-                return self.children.get(name)
+        if name is not None and name in self.children:
+            return self.children[name]
+        if id is not None:
             for child in self.children.values():
                 if getattr(child, 'id', None) == id:
                     return child
+
+        if self._loaded:
             return None
 
         logger.debug('AppChildren.get started, type=%s, name=%s, id=%s', self._type, name, id)
@@ -609,12 +653,12 @@ class AppChildren():
 
     def _get_single_variable(self, name, obj_id, Variable):
         if name is not None:
-            layout = _get_single_variable_func(self.ws, self.app_handle, name)
+            props = _get_single_variable_func(self.ws, self.app_handle, name)
         else:
-            layout = _get_single_variable_by_id_func(self.ws, self.app_handle, obj_id)
-        if layout is None:
+            props = _get_single_variable_by_id_func(self.ws, self.app_handle, obj_id)
+        if props is None:
             return None
-        var = Variable._from_layout(self, layout)
+        var = Variable._from_properties(self, props)
         self.children[var.name] = var
         self.count = len(self.children)
         return var

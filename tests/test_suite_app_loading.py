@@ -16,6 +16,7 @@ from ._integration_helpers import (
     RATING_SHEET_NAME,
     TARGET_APP_NAME,
     VISUALS_SHEET_NAME,
+    get_first_field_with_value,
     register_child_cleanup,
 )
 
@@ -170,8 +171,9 @@ def test_object_get_data_with_filters_returns_filtered_dataframe(app_factory):
     df_all = obj.get_data()
     assert df_all is not None and len(df_all) > 0
 
-    test_field = list(app.fields.children.keys())[0]
-    df_filtered = obj.get_data(filters={test_field: 1})
+    test_field, test_value = get_first_field_with_value(app)
+    assert test_field is not None, "No field with values found in test app"
+    df_filtered = obj.get_data(filters={test_field: test_value})
     assert df_filtered is not None
     assert isinstance(df_filtered, pd.DataFrame)
     assert len(df_filtered) <= len(df_all)
@@ -186,11 +188,49 @@ def test_object_get_data_with_filters_clears_selections(app_factory):
     obj = sheet.objects[EXPORT_OBJECT_ID]
     df_before = obj.get_data()
 
-    test_field = list(app.fields.children.keys())[0]
-    obj.get_data(filters={test_field: 1})
+    test_field, test_value = get_first_field_with_value(app)
+    assert test_field is not None, "No field with values found in test app"
+    obj.get_data(filters={test_field: test_value})
 
     df_after = obj.get_data()
     assert len(df_before) == len(df_after)
+
+
+def test_object_get_data_with_invalid_filter_value_raises_error(app_factory):
+    """validate_filters=True (default) rejects values that don't exist in the field."""
+    app = app_factory()
+    sheet = app.sheets[VISUALS_SHEET_NAME]
+    sheet.load()
+
+    obj = sheet.objects[EXPORT_OBJECT_ID]
+    test_field = list(app.fields.children.keys())[0]
+
+    with pytest.raises(ValueError, match="values not found"):
+        obj.get_data(filters={test_field: 204654321})
+
+
+def test_object_get_data_unknown_field_raises_value_error(app_factory):
+    """validate_filters=True (default) catches non-existent field names."""
+    app = app_factory()
+    sheet = app.sheets[VISUALS_SHEET_NAME]
+    sheet.load()
+
+    obj = sheet.objects[EXPORT_OBJECT_ID]
+    with pytest.raises(ValueError, match="not found in the data model"):
+        obj.get_data(filters={"NonExistentField_XYZ_12345": 1})
+
+
+def test_object_get_data_validation_skipped_when_off(app_factory):
+    """validate_filters=False skips field name check."""
+    import pandas as pd
+    app = app_factory()
+    sheet = app.sheets[VISUALS_SHEET_NAME]
+    sheet.load()
+
+    obj = sheet.objects[EXPORT_OBJECT_ID]
+    df = obj.get_data(filters={"NonExistentField_XYZ_12345": 1},
+                      validate_filters=False)
+    assert df is None or isinstance(df, pd.DataFrame)
 
 
 def test_get_layout_works_for_master_items_sheet_object_and_bookmark(app_factory, name_factory, cleanup_registry):

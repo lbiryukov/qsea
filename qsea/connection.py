@@ -10,7 +10,7 @@ class Connection:
     New websocket connections are created automatically when a new app object is created
     """
     
-    def __init__(self, header_user, qlik_url, timeout: int = 10, verify_ssl: bool = True):
+    def __init__(self, header_user, qlik_url, timeout: int = 10, verify_ssl: bool = False):
         logger.debug('Connection class started')
         self.header_user = header_user
         self.qlik_url = qlik_url

@@ -74,6 +74,16 @@ def register_sheet_cleanup(cleanup_registry, app_factory, app_name: str, sheet_n
     cleanup_registry.append(_cleanup)
 
 
+def get_first_field_with_value(app):
+    """Return (field_name, value) for the first field that has at least one value."""
+    import qsea
+    field_name = list(app.fields.children.keys())[0]
+    values = qsea._get_field_values(app.ws, app.handle, field_name)
+    if not values:
+        return None, None
+    return field_name, next(iter(values))
+
+
 def register_sheet_clear_cleanup(cleanup_registry, app_factory, app_name: str, sheet_name: str) -> None:
     def _cleanup() -> None:
         app = app_factory(app_name=app_name, load=False)

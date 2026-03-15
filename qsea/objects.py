@@ -52,6 +52,20 @@ class Variable:
             var.script_created = False
         return var
 
+    @staticmethod
+    def _from_properties(parent, props: dict) -> 'Variable':
+        """Create a Variable from a raw Engine API GetProperties response."""
+        name = props.get('qName', '')
+        var = Variable(parent, name)
+        var.app_handle = parent.app_handle
+        var.id = props.get('qInfo', {}).get('qId', '')
+        var.definition = props.get('qDefinition', '')
+        var.description = props.get('qComment', '')
+        var.script_created = props.get('qIsScriptCreated', False)
+        if pd.isna(var.script_created):
+            var.script_created = False
+        return var
+
     def get_handle(self) -> int:
         """
         Gets the handle of the variable

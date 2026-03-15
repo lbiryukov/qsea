@@ -1,7 +1,7 @@
 import pandas as pd
 
 from qsea._config import logger
-from qsea._engine import query, _get_layout, _next_rpc_id
+from qsea._engine import query, _get_layout, _get_properties, _next_rpc_id
 from qsea._selections import _destroy_session_object
 
 
@@ -462,10 +462,10 @@ def _get_name_id_index(ws, app_handle: int, collection_type: str) -> dict:
 
 def _get_single_variable(ws, app_handle: int, name: str) -> dict:
     """
-    Fetch a single variable by name using GetVariableByName + GetLayout.
+    Fetch a single variable by name using GetVariableByName + GetProperties.
 
     Returns:
-        dict with variable layout data, or None on failure.
+        dict with variable properties, or None on failure.
     """
     logger.debug('_get_single_variable started, name=%s', name)
     result = query(ws, {
@@ -478,18 +478,18 @@ def _get_single_variable(ws, app_handle: int, name: str) -> dict:
         logger.warning('_get_single_variable: variable not found: %s', name)
         return None
     handle = result['result']['qReturn']['qHandle']
-    layout = _get_layout(ws, handle)
-    if layout is None or 'result' not in layout:
+    props = _get_properties(ws, handle)
+    if props is None or 'result' not in props:
         return None
-    return layout['result']['qLayout']
+    return props['result']['qProp']
 
 
 def _get_single_variable_by_id(ws, app_handle: int, var_id: str) -> dict:
     """
-    Fetch a single variable by ID using GetVariableById + GetLayout.
+    Fetch a single variable by ID using GetVariableById + GetProperties.
 
     Returns:
-        dict with variable layout data, or None on failure.
+        dict with variable properties, or None on failure.
     """
     logger.debug('_get_single_variable_by_id started, id=%s', var_id)
     result = query(ws, {
@@ -502,10 +502,10 @@ def _get_single_variable_by_id(ws, app_handle: int, var_id: str) -> dict:
         logger.warning('_get_single_variable_by_id: variable not found: %s', var_id)
         return None
     handle = result['result']['qReturn']['qHandle']
-    layout = _get_layout(ws, handle)
-    if layout is None or 'result' not in layout:
+    props = _get_properties(ws, handle)
+    if props is None or 'result' not in props:
         return None
-    return layout['result']['qLayout']
+    return props['result']['qProp']
 
 
 def _get_single_measure(ws, app_handle: int, measure_id: str) -> dict:
@@ -516,7 +516,6 @@ def _get_single_measure(ws, app_handle: int, measure_id: str) -> dict:
         dict with measure properties (qProp), or None on failure.
     """
     logger.debug('_get_single_measure started, id=%s', measure_id)
-    from qsea._engine import _get_properties
     result = query(ws, {
         "jsonrpc": "2.0", "id": _next_rpc_id(),
         "method": "GetMeasure",
@@ -541,7 +540,6 @@ def _get_single_dimension(ws, app_handle: int, dim_id: str) -> dict:
         dict with dimension properties (qProp), or None on failure.
     """
     logger.debug('_get_single_dimension started, id=%s', dim_id)
-    from qsea._engine import _get_properties
     result = query(ws, {
         "jsonrpc": "2.0", "id": _next_rpc_id(),
         "method": "GetDimension",
