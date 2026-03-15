@@ -160,6 +160,39 @@ def test_object_get_data_returns_none_for_filter(app_factory):
     assert sheet.objects[FILTER_OBJECT_ID].get_data() is None
 
 
+def test_object_get_data_with_filters_returns_filtered_dataframe(app_factory):
+    import pandas as pd
+    app = app_factory()
+    sheet = app.sheets[VISUALS_SHEET_NAME]
+    sheet.load()
+
+    obj = sheet.objects[EXPORT_OBJECT_ID]
+    df_all = obj.get_data()
+    assert df_all is not None and len(df_all) > 0
+
+    test_field = list(app.fields.children.keys())[0]
+    df_filtered = obj.get_data(filters={test_field: 1})
+    assert df_filtered is not None
+    assert isinstance(df_filtered, pd.DataFrame)
+    assert len(df_filtered) <= len(df_all)
+
+
+def test_object_get_data_with_filters_clears_selections(app_factory):
+    import pandas as pd
+    app = app_factory()
+    sheet = app.sheets[VISUALS_SHEET_NAME]
+    sheet.load()
+
+    obj = sheet.objects[EXPORT_OBJECT_ID]
+    df_before = obj.get_data()
+
+    test_field = list(app.fields.children.keys())[0]
+    obj.get_data(filters={test_field: 1})
+
+    df_after = obj.get_data()
+    assert len(df_before) == len(df_after)
+
+
 def test_get_layout_works_for_master_items_sheet_object_and_bookmark(app_factory, name_factory, cleanup_registry):
     measure_name = name_factory("NewMs123")
     dimension_name = name_factory("NewDim123")
