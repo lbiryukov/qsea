@@ -90,6 +90,25 @@ uv run python -c "import pathlib, zipfile; wheel = next(pathlib.Path('dist').glo
 uv run python -c "import pathlib, tarfile; sdist = next(pathlib.Path('dist').glob('qsea-*.tar.gz')); tf = tarfile.open(sdist); [print(name) for name in tf.getnames()]"
 ```
 
+## 6. Publish to PyPI
+
+After validation, upload to PyPI:
+
+```powershell
+uv run twine upload dist/*
+```
+
+For Test PyPI (recommended before first production upload):
+
+```powershell
+uv run twine upload --repository testpypi dist/*
+```
+
+**Requirements:**
+- PyPI account: https://pypi.org/account/register/
+- API token: Account Settings -> API tokens -> Add API token
+- Configure credentials: `~/.pypirc` or environment variables `TWINE_USERNAME` / `TWINE_PASSWORD` (use `__token__` and the token value for password)
+
 ## Release Policy
 
 The supported release path is now:
